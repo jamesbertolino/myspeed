@@ -133,49 +133,72 @@ export default function Dashboard() {
       </div>
 
       {/* IP Info Banner */}
-      <div className="card p-4 mb-6 flex flex-wrap items-center gap-6">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center">
-            <Globe className="w-5 h-5 text-[#00d4ff]" />
+      <div className="card p-4 mb-6">
+        {loadingIp ? (
+          <div className="flex gap-3">
+            {[80, 120, 160, 100].map(w => (
+              <div key={w} className="h-8 bg-white/5 rounded animate-pulse" style={{ width: w }} />
+            ))}
           </div>
-          <div>
-            <p className="text-xs text-gray-500 uppercase tracking-wider">IP Público</p>
-            {loadingIp ? (
-              <div className="h-5 w-28 bg-white/5 rounded animate-pulse mt-0.5" />
-            ) : (
-              <p className="text-base font-bold mono text-white">{ipInfo?.ip || '—'}</p>
-            )}
+        ) : (
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+            {/* IP */}
+            <div className="flex items-center gap-2">
+              <Globe className="w-4 h-4 text-[#00d4ff] shrink-0" />
+              <span className="text-xs text-gray-500">IP</span>
+              <span className="text-sm font-bold mono text-white">{ipInfo?.ip || '—'}</span>
+            </div>
+
+            <div className="w-px h-4 bg-white/10 hidden sm:block" />
+
+            {/* Location */}
+            <div className="flex items-center gap-2">
+              <MapPin className="w-4 h-4 text-gray-500 shrink-0" />
+              <span className="text-sm text-gray-300">
+                {ipInfo?.city || '—'}
+                {ipInfo?.region ? `, ${ipInfo.region.replace(/^State of /, '').replace(/^Minas Gerais$/, 'MG').replace(/^São Paulo$/, 'SP').replace(/^Rio de Janeiro$/, 'RJ').replace(/^Paraná$/, 'PR').replace(/^Rio Grande do Sul$/, 'RS').replace(/^Bahia$/, 'BA').replace(/^Goiás$/, 'GO').replace(/^Pernambuco$/, 'PE').replace(/^Ceará$/, 'CE')}` : ''}
+                {ipInfo?.country ? ` · ${ipInfo.country}` : ''}
+              </span>
+            </div>
+
+            <div className="w-px h-4 bg-white/10 hidden sm:block" />
+
+            {/* ISP */}
+            <div className="flex items-center gap-2 min-w-0">
+              <Building className="w-4 h-4 text-gray-500 shrink-0" />
+              <span className="text-sm text-gray-300 truncate max-w-[200px]" title={ipInfo?.isp || ''}>
+                {ipInfo?.isp
+                  ? ipInfo.isp
+                    .replace(/^AS\d+\s+/, '')
+                    .replace(/\s+(Servicos?|Serviços?)\s+de\s+Telecomunicacoes?.*/i, '')
+                    .replace(/\s+S\.A\.?$/i, '')
+                    .replace(/\s+Ltda\.?$/i, '')
+                    .trim()
+                  : '—'}
+              </span>
+              {ipInfo?.asn && (
+                <span className="tag tag-cyan shrink-0">{ipInfo.asn.split(' ')[0]}</span>
+              )}
+            </div>
+
+            <div className="w-px h-4 bg-white/10 hidden sm:block" />
+
+            {/* Timezone */}
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-gray-500 shrink-0" />
+              <span className="text-sm text-gray-300">
+                {ipInfo?.timezone?.replace('America/', '').replace('_', ' ') || '—'}
+              </span>
+            </div>
+
+            <div className="ml-auto">
+              <a href="/speedtest" className="btn-cyan px-4 py-2 rounded-lg text-sm font-semibold inline-flex items-center gap-2">
+                <Activity className="w-4 h-4" />
+                Testar Velocidade
+              </a>
+            </div>
           </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <MapPin className="w-4 h-4 text-gray-500" />
-          <div>
-            <p className="text-xs text-gray-500 uppercase tracking-wider">Localização</p>
-            <p className="text-sm text-gray-300">
-              {ipInfo ? `${ipInfo.city || '—'}, ${ipInfo.region || ''} ${ipInfo.country || ''}` : '—'}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <Building className="w-4 h-4 text-gray-500" />
-          <div>
-            <p className="text-xs text-gray-500 uppercase tracking-wider">ISP / ASN</p>
-            <p className="text-sm text-gray-300">{ipInfo?.isp || '—'}</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <Clock className="w-4 h-4 text-gray-500" />
-          <div>
-            <p className="text-xs text-gray-500 uppercase tracking-wider">Fuso Horário</p>
-            <p className="text-sm text-gray-300">{ipInfo?.timezone || '—'}</p>
-          </div>
-        </div>
-        <div className="ml-auto">
-          <a href="/speedtest" className="btn-cyan px-4 py-2 rounded-lg text-sm font-semibold inline-flex items-center gap-2">
-            <Activity className="w-4 h-4" />
-            Testar Velocidade
-          </a>
-        </div>
+        )}
       </div>
 
       {/* Stats Grid */}
