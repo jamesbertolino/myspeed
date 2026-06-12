@@ -43,9 +43,17 @@ export default function Dashboard() {
   const latencyHistory = useRef<number[]>([])
 
   useEffect(() => {
-    fetch('/api/ip-info')
+    fetch('https://ipwho.is/')
       .then(r => r.json())
-      .then(d => setIpInfo(d))
+      .then(d => setIpInfo({
+        ip: d.ip,
+        city: d.city,
+        region: d.region,
+        country: d.country,
+        isp: d.connection?.isp || d.connection?.org,
+        asn: d.connection?.asn ? `AS${d.connection.asn}` : undefined,
+        timezone: d.timezone?.id,
+      }))
       .catch(() => {})
       .finally(() => setLoadingIp(false))
   }, [])
