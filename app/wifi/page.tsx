@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { Wifi, Plus, Trash2, Info, CheckCircle, AlertTriangle, Radio } from 'lucide-react'
+import { useState, useCallback } from 'react'
+import { Wifi, Plus, Trash2, Info, CheckCircle, AlertTriangle, Radio, ScanLine, RefreshCw } from 'lucide-react'
 import WiFiChannelMap, { WiFiNetwork } from '@/components/WiFiChannelMap'
 import { NON_OVERLAPPING_24, NON_OVERLAPPING_5 } from '@/lib/utils'
 import clsx from 'clsx'
@@ -41,6 +41,30 @@ export default function WiFiPage() {
   const [networks, setNetworks] = useState<WiFiNetwork[]>([...EXAMPLE_NETWORKS_24, ...EXAMPLE_NETWORKS_5])
   const [showAdd, setShowAdd] = useState(false)
   const [newNet, setNewNet] = useState<Partial<WiFiNetwork>>({ band: '2.4', width: 20, security: 'WPA2' })
+  const [scanning, setScanning] = useState(false)
+  const [scanError, setScanError] = useState<string | null>(null)
+  const [isRealData, setIsRealData] = useState(false)
+
+  const scanNetworks = useCallback(async () => {
+    setScanning(true)
+    setScanError(null)
+    try {
+      const res = await fetch('/api/wifi/scan')
+      const data = await res.json()
+      if (data.error) {
+        setScanError(data.error)
+      } else if (data.networks?.length > 0) {
+        setNetworks(data.networks)
+        setIsRealData(true)
+      } else {
+        setScanError('Nenhuma rede encontrada. Verifique se o WiFi está ativo.')
+      }
+    } catch {
+      setScanError('Erro ao conectar com a API de scan.')
+    } finally {
+      setScanning(false)
+    }
+  }, [])
 
   const currentBandNets = networks.filter(n => n.band === band)
   const recommended = bestChannel(networks, band)
@@ -71,10 +95,38 @@ export default function WiFiPage() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-white">Analisador WiFi</h1>
-        <p className="text-sm text-gray-500 mt-1">Visualize canais, interferências e recomendações</p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Analisador WiFi</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            Visualize canais, interferências e recomendações
+            {isRealData && <span className="ml-2 tag tag-green">Dados reais</span>}
+          </p>
+        </div>
+        <button
+          onClick={scanNetworks}
+          disabled={scanning}
+          className="btn-cyan px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 shrink-0 disabled:opacity-50"
+        >
+          {scanning
+            ? <RefreshCw className="w-4 h-4 animate-spin" />
+            : <ScanLine className="w-4 h-4" />}
+          {scanning ? 'Escaneando...' : 'Escanear Redes'}
+        </button>
       </div>
+
+      {scanError && (
+        <div className="mb-4 px-4 py-3 rounded-lg border border-yellow-500/30 bg-yellow-500/5 text-yellow-400 text-sm flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+          <div>
+            <span className="font-semibold">Scan indisponível:</span> {scanError}
+            <p className="text-xs text-yellow-600 mt-0.5">
+              O scan funciona apenas quando o app roda localmente (não em serverless/Vercel).
+              Execute <code className="bg-yellow-900/30 px-1 rounded">npm run dev</code> na sua máquina.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Band Selector */}
       <div className="flex gap-1 mb-6 bg-[#0a1128] rounded-xl p-1 border border-[#1a2744] w-fit">
