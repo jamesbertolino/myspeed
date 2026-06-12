@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useCallback } from 'react'
-import { Wifi, Plus, Trash2, Info, CheckCircle, AlertTriangle, Radio, ScanLine, RefreshCw } from 'lucide-react'
+import { useState, useCallback, useEffect } from 'react'
+import { Wifi, Plus, Trash2, Info, CheckCircle, AlertTriangle, Radio, ScanLine, RefreshCw, Puzzle } from 'lucide-react'
 import WiFiChannelMap, { WiFiNetwork } from '@/components/WiFiChannelMap'
 import { NON_OVERLAPPING_24, NON_OVERLAPPING_5 } from '@/lib/utils'
 import clsx from 'clsx'
@@ -44,11 +44,42 @@ export default function WiFiPage() {
   const [scanning, setScanning] = useState(false)
   const [scanError, setScanError] = useState<string | null>(null)
   const [isRealData, setIsRealData] = useState(false)
+  const [extensionReady, setExtensionReady] = useState(false)
+
+  // Detect if the MySpeed WiFi extension is installed and active
+  useEffect(() => {
+    const onReady = () => setExtensionReady(true)
+    window.addEventListener('myspeed:extension-ready', onReady)
+    return () => window.removeEventListener('myspeed:extension-ready', onReady)
+  }, [])
+
+  // Ask the extension (content script bridge) for a WiFi scan
+  const scanViaExtension = (): Promise<WiFiNetwork[] | null> =>
+    new Promise((resolve) => {
+      const timeout = setTimeout(() => resolve(null), 4000)
+      window.addEventListener('myspeed:wifi-scan-response', (e) => {
+        clearTimeout(timeout)
+        const detail = (e as CustomEvent).detail
+        resolve(detail?.networks?.length > 0 ? detail.networks : null)
+      }, { once: true })
+      window.dispatchEvent(new CustomEvent('myspeed:wifi-scan-request'))
+    })
 
   const scanNetworks = useCallback(async () => {
     setScanning(true)
     setScanError(null)
     try {
+      // 1. Try extension first (works on Vercel too)
+      if (extensionReady) {
+        const extNetworks = await scanViaExtension()
+        if (extNetworks) {
+          setNetworks(extNetworks)
+          setIsRealData(true)
+          return
+        }
+      }
+
+      // 2. Fall back to server-side API (works only when running locally)
       const res = await fetch('/api/wifi/scan')
       const data = await res.json()
       if (data.error) {
@@ -64,7 +95,8 @@ export default function WiFiPage() {
     } finally {
       setScanning(false)
     }
-  }, [])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [extensionReady])
 
   const currentBandNets = networks.filter(n => n.band === band)
   const recommended = bestChannel(networks, band)
@@ -115,15 +147,26 @@ export default function WiFiPage() {
         </button>
       </div>
 
+      {!extensionReady && (
+        <div className="mb-4 px-4 py-3 rounded-lg border border-[#1a2744] bg-[#050a1a] text-gray-400 text-sm flex items-start gap-3">
+          <Puzzle className="w-4 h-4 mt-0.5 shrink-0 text-cyan-400" />
+          <div>
+            <span className="font-semibold text-white">Extensão não detectada</span>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Para escanear redes reais no Vercel, instale a extensão Chrome em{' '}
+              <code className="bg-[#0a1128] px-1 rounded">extension/</code> e execute{' '}
+              <code className="bg-[#0a1128] px-1 rounded">native-host/install.ps1</code>.
+              Localmente, <code className="bg-[#0a1128] px-1 rounded">npm run dev</code> funciona sem extensão.
+            </p>
+          </div>
+        </div>
+      )}
+
       {scanError && (
         <div className="mb-4 px-4 py-3 rounded-lg border border-yellow-500/30 bg-yellow-500/5 text-yellow-400 text-sm flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
           <div>
             <span className="font-semibold">Scan indisponível:</span> {scanError}
-            <p className="text-xs text-yellow-600 mt-0.5">
-              O scan funciona apenas quando o app roda localmente (não em serverless/Vercel).
-              Execute <code className="bg-yellow-900/30 px-1 rounded">npm run dev</code> na sua máquina.
-            </p>
           </div>
         </div>
       )}

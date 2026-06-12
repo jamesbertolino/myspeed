@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "MySpeed WiFi Scanner",
+  "version": "1.0.0",
+  "description": "Escaneia redes WiFi reais e passa para o MySpeed",
+  "permissions": ["nativeMessaging"],
+  "externally_connectable": {
+    "matches": [
+      "https://myspeed-beta.vercel.app/*",
+      "https://*.vercel.app/*",
+      "http://localhost:3000/*"
+    ]
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://myspeed-beta.vercel.app/*",
+        "https://*.vercel.app/*",
+        "http://localhost:3000/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "action": {
+    "default_title": "MySpeed WiFi Scanner"
+  }
+}
