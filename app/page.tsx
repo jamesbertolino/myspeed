@@ -43,10 +43,31 @@ export default function Dashboard() {
   const latencyHistory = useRef<number[]>([])
 
   useEffect(() => {
-    fetch('/api/ip-info')
+    const parse = (d: Record<string, unknown>) => ({
+      ip: (d.ip ?? d.query) as string,
+      city: (d.city) as string,
+      region: (d.region ?? d.regionName) as string,
+      country: (d.country ?? d.country_name) as string,
+      isp: (d.org ?? d.isp) as string,
+      asn: (d.asn ?? (d.org as string)?.split(' ')[0]) as string,
+      timezone: ((d.timezone as Record<string,unknown>)?.id ?? d.timezone) as string,
+    })
+
+    // Call geo APIs directly from the browser so the real public IP is detected
+    fetch('https://ipwho.is/')
       .then(r => r.json())
-      .then(d => setIpInfo(d))
-      .catch(() => {})
+      .then(d => { if (d.success === false) throw new Error('fail'); setIpInfo(parse(d)) })
+      .catch(() =>
+        fetch('https://ipinfo.io/json')
+          .then(r => r.json())
+          .then(d => { if (d.bogon) throw new Error('bogon'); setIpInfo(parse(d)) })
+          .catch(() =>
+            fetch('/api/ip-info')
+              .then(r => r.json())
+              .then(d => setIpInfo(d))
+              .catch(() => {})
+          )
+      )
       .finally(() => setLoadingIp(false))
   }, [])
 
