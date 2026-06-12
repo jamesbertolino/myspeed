@@ -3,6 +3,8 @@
 import { useState, useCallback, useRef } from 'react'
 import { Download, Upload, Activity, Play, RotateCcw, CheckCircle, Clock } from 'lucide-react'
 import SpeedGauge from '@/components/SpeedGauge'
+import ServerSelector from '@/components/ServerSelector'
+import { TestServer } from '@/lib/servers'
 import { formatSpeed, latencyColor, latencyLabel, calcJitter, jitterLabel } from '@/lib/utils'
 import clsx from 'clsx'
 
@@ -14,9 +16,7 @@ const PHASE_DURATION_MS = 8000   // 8 s per download/upload phase
 const DOWNLOAD_CHUNK_BYTES = 25 * 1024 * 1024   // 25 MB per request
 const UPLOAD_CHUNK_BYTES   = 5  * 1024 * 1024   // 5 MB per request
 
-// Always use Cloudflare's public speed test endpoints so measurements
-// reflect real internet throughput, not local loopback.
-const CF = 'https://speed.cloudflare.com'
+const CF_UPLOAD = 'https://speed.cloudflare.com/__up'
 
 interface Result {
   ping: number
@@ -36,16 +36,16 @@ export default function SpeedTestPage() {
   const [result, setResult] = useState<Result | null>(null)
   const [history, setHistory] = useState<Result[]>([])
   const [speedHistory, setSpeedHistory] = useState<number[]>([])
+  const [server, setServer] = useState<TestServer | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const cancelledRef = useRef(false)
 
-  const measurePing = async (): Promise<{ avg: number; jitter: number }> => {
+  const measurePing = async (srv: TestServer): Promise<{ avg: number; jitter: number }> => {
     const samples: number[] = []
     for (let i = 0; i < PING_SAMPLES; i++) {
       if (cancelledRef.current) throw new Error('cancelled')
       const t0 = performance.now()
-      // Ping against Cloudflare so it reflects real internet RTT
-      await fetch(`${CF}/__down?bytes=0&_=${Date.now()}`, { cache: 'no-store' })
+      await fetch(`${srv.pingUrl}&_=${Date.now()}`, { cache: 'no-store' })
       samples.push(performance.now() - t0)
       setCurrentPing(samples[samples.length - 1])
       setProgress(Math.round(((i + 1) / PING_SAMPLES) * 100))
@@ -55,11 +55,16 @@ export default function SpeedTestPage() {
     return { avg, jitter: calcJitter(samples) }
   }
 
-  const measureDownload = async (): Promise<number> => {
+  const measureDownload = async (srv: TestServer): Promise<number> => {
     abortRef.current = new AbortController()
     const startTime = performance.now()
     let totalBytes = 0
     const snap: number[] = []
+
+    // Build per-chunk download URL for the selected server
+    const chunkUrl = srv.cors
+      ? `${srv.downloadUrl}?bytes=${DOWNLOAD_CHUNK_BYTES}`
+      : `${srv.downloadUrl}`  // proxy URL already encodes the remote target
 
     const tick = setInterval(() => {
       const elapsed = (performance.now() - startTime) / 1000
@@ -69,7 +74,7 @@ export default function SpeedTestPage() {
     try {
       while (performance.now() - startTime < PHASE_DURATION_MS) {
         if (cancelledRef.current) break
-        const res = await fetch(`${CF}/__down?bytes=${DOWNLOAD_CHUNK_BYTES}`, {
+        const res = await fetch(`${chunkUrl}&_=${Date.now()}`, {
           signal: abortRef.current.signal,
           cache: 'no-store',
         })
@@ -98,9 +103,8 @@ export default function SpeedTestPage() {
     return (totalBytes * 8) / (elapsed * 1e6)
   }
 
-  const measureUpload = async (): Promise<number> => {
+  const measureUpload = async (srv: TestServer): Promise<number> => {
     const chunk = new Uint8Array(UPLOAD_CHUNK_BYTES)
-    // Random-ish data so compression doesn't skew the result
     crypto.getRandomValues(chunk)
 
     const startTime = performance.now()
@@ -115,11 +119,9 @@ export default function SpeedTestPage() {
     try {
       while (performance.now() - startTime < PHASE_DURATION_MS) {
         if (cancelledRef.current) break
-        // Use FormData (multipart/form-data) — avoids CORS preflight that
-        // application/octet-stream would trigger, letting __up accept the POST.
         const fd = new FormData()
         fd.append('file', new Blob([chunk]), 'speedtest')
-        await fetch(`${CF}/__up`, {
+        await fetch(srv.uploadUrl, {
           method: 'POST',
           body: fd,
           cache: 'no-store',
@@ -141,6 +143,8 @@ export default function SpeedTestPage() {
   }
 
   const runTest = useCallback(async () => {
+    const srv = server
+    if (!srv) return
     cancelledRef.current = false
     setPhase('ping')
     setProgress(0)
@@ -150,21 +154,21 @@ export default function SpeedTestPage() {
 
     try {
       // Phase 1: Ping
-      const { avg: pingAvg, jitter } = await measurePing()
+      const { avg: pingAvg, jitter } = await measurePing(srv)
 
       // Phase 2: Download
       setPhase('download')
       setProgress(0)
       setCurrentSpeed(0)
       setSpeedHistory([])
-      const downloadMbps = await measureDownload()
+      const downloadMbps = await measureDownload(srv)
 
       // Phase 3: Upload
       setPhase('upload')
       setProgress(0)
       setCurrentSpeed(0)
       setSpeedHistory([])
-      const uploadMbps = await measureUpload()
+      const uploadMbps = await measureUpload(srv)
 
       const res: Result = {
         ping: pingAvg,
@@ -212,6 +216,9 @@ export default function SpeedTestPage() {
         <h1 className="text-2xl font-bold text-white">Teste de Velocidade</h1>
         <p className="text-sm text-gray-500 mt-1">Meça download, upload, ping e jitter da sua conexão</p>
       </div>
+
+      {/* Server Selector */}
+      <ServerSelector selected={server} onChange={setServer} disabled={isRunning} />
 
       {/* Main Test Card */}
       <div className="card p-8 mb-6">
@@ -312,7 +319,8 @@ export default function SpeedTestPage() {
             <div className="flex gap-3">
               <button
                 onClick={runTest}
-                className="btn-cyan px-8 py-3 rounded-xl font-bold text-base flex items-center gap-2"
+                disabled={!server}
+                className="btn-cyan px-8 py-3 rounded-xl font-bold text-base flex items-center gap-2 disabled:opacity-40"
               >
                 <Play className="w-5 h-5" />
                 {phase === 'done' ? 'Testar Novamente' : 'Iniciar Teste'}
