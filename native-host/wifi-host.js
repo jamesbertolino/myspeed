@@ -51,73 +51,116 @@ function radioTypeToWidth(rt) {
   return 20
 }
 
-function scanWindows() {
-  const networks = []
+// PowerShell script that uses the Windows Runtime WiFiAdapter API.
+// This does a real active scan and returns ALL visible networks — not just the connected one.
+const WINRT_SCAN_PS1 = String.raw`
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$null = [Windows.Devices.WiFi.WiFiAdapter,Windows.Devices.WiFi,ContentType=WindowsRuntime]
+$null = [Windows.Devices.Enumeration.DeviceInformation,Windows.Devices.Enumeration,ContentType=WindowsRuntime]
 
-  // 1. Currently connected network (has real RSSI)
+function AwaitOp($Task, $T) {
+  $methods = [System.WindowsRuntimeSystemExtensions].GetMethods('Public,Static') |
+    Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 }
+  foreach ($m in $methods) {
+    try {
+      $net = $m.MakeGenericMethod($T).Invoke($null, @($Task))
+      $net.Wait(-1) | Out-Null
+      return $net.Result
+    } catch {}
+  }
+}
+
+function AwaitAction($Task) {
+  $methods = [System.WindowsRuntimeSystemExtensions].GetMethods('Public,Static') |
+    Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and
+      $_.GetParameters()[0].ParameterType.Name -notlike 'IAsyncOperation*' }
+  foreach ($m in $methods) {
+    try { $net = $m.Invoke($null, @($Task)); if ($net) { $net.Wait(-1) | Out-Null; return } } catch {}
+  }
+}
+
+$sel  = [Windows.Devices.WiFi.WiFiAdapter]::GetDeviceSelector()
+$devs = AwaitOp ([Windows.Devices.Enumeration.DeviceInformation]::FindAllAsync($sel)) ([Windows.Devices.Enumeration.DeviceInformationCollection])
+if (-not $devs -or $devs.Count -eq 0) { '[]'; exit }
+
+$adapter = AwaitOp ([Windows.Devices.WiFi.WiFiAdapter]::FromIdAsync($devs[0].Id)) ([Windows.Devices.WiFi.WiFiAdapter])
+AwaitAction ($adapter.ScanAsync())
+
+$result = $adapter.NetworkReport.AvailableNetworks | ForEach-Object {
+  $f  = $_.ChannelCenterFrequencyInKilohertz / 1000
+  $b  = if ($f -lt 3000) { '2.4' } else { '5' }
+  $ch = if ($b -eq '2.4') { [int](($f - 2412) / 5) + 1 } else { [int](($f - 5180) / 5) + 36 }
+  [PSCustomObject]@{
+    ssid    = $_.Ssid
+    bssid   = $_.Bssid
+    signal  = [int]$_.NetworkRssiInDecibelMilliwatts
+    channel = $ch
+    band    = $b
+    phy     = $_.PhyKind.ToString()
+  }
+}
+$result | ConvertTo-Json -Compress
+`
+
+function phyToWidth(phy) {
+  const p = (phy || '').toLowerCase()
+  if (p === 'he') return 80   // 802.11ax Wi-Fi 6
+  if (p === 'vht') return 80  // 802.11ac
+  if (p === 'ht') return 40   // 802.11n
+  return 20
+}
+
+function scanWindowsWinRT() {
+  const os = require('os')
+  const path = require('path')
+  const psFile = path.join(os.tmpdir(), 'myspeed-wifiscan.ps1')
+  require('fs').writeFileSync(psFile, WINRT_SCAN_PS1, 'utf8')
+
+  const raw = execSync(
+    `powershell -NoProfile -ExecutionPolicy Bypass -File "${psFile}"`,
+    { encoding: 'utf8', timeout: 15000 }
+  ).trim()
+
+  if (!raw || raw === '[]') return []
+
+  const parsed = JSON.parse(raw)
+  const items = Array.isArray(parsed) ? parsed : [parsed]
+
+  return items
+    .filter(n => n.channel && n.channel > 0)
+    .map(n => ({
+      ssid: n.ssid || 'Hidden',
+      bssid: n.bssid,
+      signal: n.signal,
+      channel: n.channel,
+      band: n.band,
+      width: phyToWidth(n.phy),
+    }))
+}
+
+function scanWindows() {
+  // Prefer WinRT scan (all visible networks, active scan)
+  try {
+    const networks = scanWindowsWinRT()
+    if (networks.length > 0) return networks
+  } catch (_) { /* fall through to netsh */ }
+
+  // Fallback: netsh (may only return the connected network on some systems)
+  const networks = []
   try {
     const out = execSync('netsh wlan show interfaces', { encoding: 'utf8', timeout: 5000 })
     const lines = out.split('\n').map(l => l.trim()).filter(Boolean)
-
     const ssid = extractField(lines, /^SSID\s*:\s*(?!.*BSSID)(.+)/i)
     const bssid = extractField(lines, /^(?:AP\s+)?BSSID\s*:\s*(.+)/i)
     const channelRaw = extractField(lines, /^(?:Channel|Canal)\s*:\s*(\d+)/i)
     const rssiRaw = extractField(lines, /^Rssi\s*:\s*(-?\d+)/i)
     const signalPctRaw = extractField(lines, /^(?:Signal|Sinal)\s*:\s*(\d+)/i)
-    const radioType = extractField(lines,
-      /^Radio type\s*:\s*(.+)/i,
-      /^Tipo de r[áa]dio\s*:\s*(.+)/i,
-    ) || ''
-    const auth = extractField(lines,
-      /^Authentication\s*:\s*(.+)/i,
-      /^Autenti[^\s]*\s*:\s*(.+)/i,
-    )
-
+    const radioType = extractField(lines, /^Radio type\s*:\s*(.+)/i, /^Tipo de r[áa]dio\s*:\s*(.+)/i) || ''
+    const auth = extractField(lines, /^Authentication\s*:\s*(.+)/i, /^Autenti[^\s]*\s*:\s*(.+)/i)
     const channel = channelRaw ? parseInt(channelRaw) : 0
-    const signal = rssiRaw ? parseInt(rssiRaw)
-      : signalPctRaw ? signalPctToDbm(parseInt(signalPctRaw)) : -70
-
-    if (ssid && channel) {
-      networks.push({ ssid, channel, signal, band: channelToBand(channel),
-        width: radioTypeToWidth(radioType), security: auth, bssid })
-    }
-  } catch (_) { /* interface unavailable */ }
-
-  // 2. All visible networks
-  try {
-    const out = execSync('netsh wlan show networks mode=bssid', { encoding: 'utf8', timeout: 5000 })
-    const ssidBlocks = out.split(/\nSSID \d+\s*:/).slice(1)
-
-    for (const block of ssidBlocks) {
-      const lines = block.split('\n').map(l => l.trim()).filter(Boolean)
-      const ssid = lines[0] || 'Hidden'
-      if (networks.some(n => n.ssid === ssid)) continue
-
-      const auth = extractField(lines,
-        /^Authentication\s*:\s*(.+)/i,
-        /^Autenti[^\s]*\s*:\s*(.+)/i,
-      )
-
-      const bssidBlocks = block.split(/BSSID \d+\s*:/).slice(1)
-      for (const bb of bssidBlocks) {
-        const blines = bb.split('\n').map(l => l.trim()).filter(Boolean)
-        const bssid = blines[0]
-        const signalRaw = extractField(blines, /^(?:Signal|Sinal)\s*:\s*(\d+)/i)
-        const channelRaw = extractField(blines, /^(?:Channel|Canal)\s*:\s*(\d+)/i)
-        const radioType = extractField(blines,
-          /^Radio type\s*:\s*(.+)/i,
-          /^Tipo de r[áa]dio\s*:\s*(.+)/i,
-        ) || ''
-        const channel = channelRaw ? parseInt(channelRaw) : 0
-        if (!channel || isNaN(channel)) continue
-        networks.push({ ssid, channel,
-          signal: signalRaw ? signalPctToDbm(parseInt(signalRaw)) : -70,
-          band: channelToBand(channel), width: radioTypeToWidth(radioType),
-          security: auth, bssid })
-      }
-    }
-  } catch (_) { /* scan unavailable */ }
-
+    const signal = rssiRaw ? parseInt(rssiRaw) : signalPctRaw ? signalPctToDbm(parseInt(signalPctRaw)) : -70
+    if (ssid && channel) networks.push({ ssid, channel, signal, band: channelToBand(channel), width: radioTypeToWidth(radioType), security: auth, bssid })
+  } catch (_) {}
   return networks
 }
 

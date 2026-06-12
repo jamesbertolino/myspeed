@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server'
 import { exec } from 'child_process'
 import { promisify } from 'util'
+import { writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 
 const execAsync = promisify(exec)
 
@@ -28,6 +31,72 @@ function radioTypeToWidth(radioType: string): 20 | 40 | 80 | 160 {
   return 20
 }
 
+function phyToWidth(phy: string): 20 | 40 | 80 | 160 {
+  const p = phy.toLowerCase()
+  if (p === 'he') return 80
+  if (p === 'vht') return 80
+  if (p === 'ht') return 40
+  return 20
+}
+
+const WINRT_SCAN_PS1 = String.raw`
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$null = [Windows.Devices.WiFi.WiFiAdapter,Windows.Devices.WiFi,ContentType=WindowsRuntime]
+$null = [Windows.Devices.Enumeration.DeviceInformation,Windows.Devices.Enumeration,ContentType=WindowsRuntime]
+
+function AwaitOp($Task, $T) {
+  $methods = [System.WindowsRuntimeSystemExtensions].GetMethods('Public,Static') |
+    Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 }
+  foreach ($m in $methods) {
+    try { $net = $m.MakeGenericMethod($T).Invoke($null, @($Task)); $net.Wait(-1)|Out-Null; return $net.Result } catch {}
+  }
+}
+function AwaitAction($Task) {
+  $methods = [System.WindowsRuntimeSystemExtensions].GetMethods('Public,Static') |
+    Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and
+      $_.GetParameters()[0].ParameterType.Name -notlike 'IAsyncOperation*' }
+  foreach ($m in $methods) {
+    try { $net = $m.Invoke($null, @($Task)); if ($net) { $net.Wait(-1)|Out-Null; return } } catch {}
+  }
+}
+$sel  = [Windows.Devices.WiFi.WiFiAdapter]::GetDeviceSelector()
+$devs = AwaitOp ([Windows.Devices.Enumeration.DeviceInformation]::FindAllAsync($sel)) ([Windows.Devices.Enumeration.DeviceInformationCollection])
+if (-not $devs -or $devs.Count -eq 0) { '[]'; exit }
+$adapter = AwaitOp ([Windows.Devices.WiFi.WiFiAdapter]::FromIdAsync($devs[0].Id)) ([Windows.Devices.WiFi.WiFiAdapter])
+AwaitAction ($adapter.ScanAsync())
+$result = $adapter.NetworkReport.AvailableNetworks | ForEach-Object {
+  $f  = $_.ChannelCenterFrequencyInKilohertz / 1000
+  $b  = if ($f -lt 3000) { '2.4' } else { '5' }
+  $ch = if ($b -eq '2.4') { [int](($f-2412)/5)+1 } else { [int](($f-5180)/5)+36 }
+  [PSCustomObject]@{ ssid=$_.Ssid; bssid=$_.Bssid; signal=[int]$_.NetworkRssiInDecibelMilliwatts; channel=$ch; band=$b; phy=$_.PhyKind.ToString() }
+}
+$result | ConvertTo-Json -Compress
+`
+
+async function scanWindowsWinRT(): Promise<WiFiNetwork[]> {
+  const psFile = join(tmpdir(), 'myspeed-wifiscan.ps1')
+  writeFileSync(psFile, WINRT_SCAN_PS1, 'utf8')
+  const { stdout } = await execAsync(
+    `powershell -NoProfile -ExecutionPolicy Bypass -File "${psFile}"`,
+    { encoding: 'utf8', timeout: 15000 }
+  )
+  const raw = stdout.trim()
+  if (!raw || raw === '[]') return []
+  const parsed = JSON.parse(raw)
+  const items: Array<{ ssid: string; bssid: string; signal: number; channel: number; band: '2.4' | '5'; phy: string }> =
+    Array.isArray(parsed) ? parsed : [parsed]
+  return items
+    .filter(n => n.channel && n.channel > 0)
+    .map(n => ({
+      ssid: n.ssid || 'Hidden',
+      bssid: n.bssid,
+      signal: n.signal,
+      channel: n.channel,
+      band: n.band,
+      width: phyToWidth(n.phy),
+    }))
+}
+
 function extractField(lines: string[], ...patterns: RegExp[]): string | undefined {
   for (const line of lines) {
     for (const pattern of patterns) {
@@ -38,9 +107,16 @@ function extractField(lines: string[], ...patterns: RegExp[]): string | undefine
 }
 
 async function scanWindows(): Promise<WiFiNetwork[]> {
+  // Prefer WinRT (active scan, all visible networks)
+  try {
+    const networks = await scanWindowsWinRT()
+    if (networks.length > 0) return networks
+  } catch { /* fall through */ }
+
+  // Fallback: netsh (may only return the connected network on some systems)
   const networks: WiFiNetwork[] = []
 
-  // 1. Connected network via "show interfaces" — has real RSSI + channel
+  // Connected network via "show interfaces" — has real RSSI + channel
   try {
     const { stdout: ifOut } = await execAsync('netsh wlan show interfaces', { encoding: 'utf8' })
     const lines = ifOut.split('\n').map(l => l.trim()).filter(Boolean)
