@@ -115,11 +115,14 @@ export default function SpeedTestPage() {
     try {
       while (performance.now() - startTime < PHASE_DURATION_MS) {
         if (cancelledRef.current) break
+        // Use FormData (multipart/form-data) — avoids CORS preflight that
+        // application/octet-stream would trigger, letting __up accept the POST.
+        const fd = new FormData()
+        fd.append('file', new Blob([chunk]), 'speedtest')
         await fetch(`${CF}/__up`, {
           method: 'POST',
-          body: chunk,
+          body: fd,
           cache: 'no-store',
-          headers: { 'Content-Type': 'application/octet-stream' },
         })
         totalBytes += UPLOAD_CHUNK_BYTES
         const elapsed = (performance.now() - startTime) / 1000
