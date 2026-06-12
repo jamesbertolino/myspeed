@@ -183,7 +183,7 @@ export default function SpeedTestPage() {
     } catch {
       setPhase('idle')
     }
-  }, [])
+  }, [server])
 
   const reset = () => {
     cancelledRef.current = true
