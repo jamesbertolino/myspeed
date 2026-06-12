@@ -11,8 +11,12 @@ type Phase = 'idle' | 'ping' | 'download' | 'upload' | 'done'
 const PING_SAMPLES = 15
 const PING_INTERVAL_MS = 200
 const PHASE_DURATION_MS = 8000   // 8 s per download/upload phase
-const DOWNLOAD_CHUNK_MB = 20
-const UPLOAD_CHUNK_MB = 5
+const DOWNLOAD_CHUNK_BYTES = 25 * 1024 * 1024   // 25 MB per request
+const UPLOAD_CHUNK_BYTES   = 5  * 1024 * 1024   // 5 MB per request
+
+// Always use Cloudflare's public speed test endpoints so measurements
+// reflect real internet throughput, not local loopback.
+const CF = 'https://speed.cloudflare.com'
 
 interface Result {
   ping: number
@@ -40,7 +44,8 @@ export default function SpeedTestPage() {
     for (let i = 0; i < PING_SAMPLES; i++) {
       if (cancelledRef.current) throw new Error('cancelled')
       const t0 = performance.now()
-      await fetch(`/api/ping?_=${Date.now()}`, { cache: 'no-store' })
+      // Ping against Cloudflare so it reflects real internet RTT
+      await fetch(`${CF}/__down?bytes=0&_=${Date.now()}`, { cache: 'no-store' })
       samples.push(performance.now() - t0)
       setCurrentPing(samples[samples.length - 1])
       setProgress(Math.round(((i + 1) / PING_SAMPLES) * 100))
@@ -64,7 +69,7 @@ export default function SpeedTestPage() {
     try {
       while (performance.now() - startTime < PHASE_DURATION_MS) {
         if (cancelledRef.current) break
-        const res = await fetch(`/api/speedtest/download?size=${DOWNLOAD_CHUNK_MB}`, {
+        const res = await fetch(`${CF}/__down?bytes=${DOWNLOAD_CHUNK_BYTES}`, {
           signal: abortRef.current.signal,
           cache: 'no-store',
         })
@@ -94,9 +99,9 @@ export default function SpeedTestPage() {
   }
 
   const measureUpload = async (): Promise<number> => {
-    const chunkSize = UPLOAD_CHUNK_MB * 1024 * 1024
-    const chunk = new Uint8Array(chunkSize)
-    for (let i = 0; i < chunkSize; i++) chunk[i] = i & 0xFF
+    const chunk = new Uint8Array(UPLOAD_CHUNK_BYTES)
+    // Random-ish data so compression doesn't skew the result
+    crypto.getRandomValues(chunk)
 
     const startTime = performance.now()
     let totalBytes = 0
@@ -110,13 +115,13 @@ export default function SpeedTestPage() {
     try {
       while (performance.now() - startTime < PHASE_DURATION_MS) {
         if (cancelledRef.current) break
-        await fetch('/api/speedtest/upload', {
+        await fetch(`${CF}/__up`, {
           method: 'POST',
           body: chunk,
           cache: 'no-store',
           headers: { 'Content-Type': 'application/octet-stream' },
         })
-        totalBytes += chunkSize
+        totalBytes += UPLOAD_CHUNK_BYTES
         const elapsed = (performance.now() - startTime) / 1000
         const speed = (totalBytes * 8) / (elapsed * 1e6)
         setCurrentSpeed(speed)
