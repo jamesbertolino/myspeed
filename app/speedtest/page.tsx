@@ -105,7 +105,9 @@ export default function SpeedTestPage() {
 
   const measureUpload = async (srv: TestServer): Promise<number> => {
     const chunk = new Uint8Array(UPLOAD_CHUNK_BYTES)
-    crypto.getRandomValues(chunk)
+    for (let i = 0; i < chunk.length; i += 65536) {
+      crypto.getRandomValues(chunk.subarray(i, Math.min(i + 65536, chunk.length)))
+    }
 
     const startTime = performance.now()
     let totalBytes = 0
@@ -119,12 +121,10 @@ export default function SpeedTestPage() {
     try {
       while (performance.now() - startTime < PHASE_DURATION_MS) {
         if (cancelledRef.current) break
-        const fd = new FormData()
-        fd.append('file', new Blob([chunk]), 'speedtest')
-        await fetch(srv.uploadUrl, {
+        await fetch('/api/speedtest/upload', {
           method: 'POST',
-          body: fd,
-          cache: 'no-store',
+          body: chunk,
+          headers: { 'Content-Type': 'application/octet-stream' },
         })
         totalBytes += UPLOAD_CHUNK_BYTES
         const elapsed = (performance.now() - startTime) / 1000
