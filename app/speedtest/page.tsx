@@ -8,13 +8,15 @@ import { TestServer } from '@/lib/servers'
 import { formatSpeed, latencyColor, latencyLabel, calcJitter, jitterLabel } from '@/lib/utils'
 import clsx from 'clsx'
 
-type Phase = 'idle' | 'ping' | 'download' | 'upload' | 'done'
+type Phase = 'idle' | 'pretest' | 'ping' | 'download' | 'upload' | 'done'
 
 const PING_SAMPLES = 15
 const PING_INTERVAL_MS = 200
 const PHASE_DURATION_MS = 8000   // 8 s per download/upload phase
 const DOWNLOAD_CHUNK_BYTES = 25 * 1024 * 1024   // 25 MB per request
 const UPLOAD_CHUNK_BYTES   = 5  * 1024 * 1024   // 5 MB per request
+const PRE_TEST_DURATION_MS = 1500                // 1.5 s quick pre-test
+const PRE_TEST_CHUNK_BYTES = 2 * 1024 * 1024    // 2 MB pre-test chunk
 
 const CF_UPLOAD = 'https://speed.cloudflare.com/__up'
 
@@ -28,6 +30,17 @@ interface Result {
 
 const MAX_GAUGE = 1000 // Mbps
 
+function pickGaugeMax(estimatedMbps: number): number {
+  if (estimatedMbps < 5)    return 20
+  if (estimatedMbps < 20)   return 50
+  if (estimatedMbps < 50)   return 100
+  if (estimatedMbps < 100)  return 250
+  if (estimatedMbps < 250)  return 500
+  if (estimatedMbps < 500)  return 1000
+  if (estimatedMbps < 1000) return 2000
+  return 10000
+}
+
 export default function SpeedTestPage() {
   const [phase, setPhase] = useState<Phase>('idle')
   const [currentSpeed, setCurrentSpeed] = useState(0)
@@ -37,6 +50,7 @@ export default function SpeedTestPage() {
   const [history, setHistory] = useState<Result[]>([])
   const [speedHistory, setSpeedHistory] = useState<number[]>([])
   const [server, setServer] = useState<TestServer | null>(null)
+  const [gaugeMax, setGaugeMax] = useState(MAX_GAUGE)
   const abortRef = useRef<AbortController | null>(null)
   const cancelledRef = useRef(false)
 
@@ -53,6 +67,40 @@ export default function SpeedTestPage() {
     }
     const avg = samples.reduce((a, b) => a + b, 0) / samples.length
     return { avg, jitter: calcJitter(samples) }
+  }
+
+  const measurePreTest = async (srv: TestServer): Promise<number> => {
+    abortRef.current = new AbortController()
+    const startTime = performance.now()
+    let totalBytes = 0
+
+    const chunkUrl = srv.cors
+      ? `${srv.downloadUrl}?bytes=${PRE_TEST_CHUNK_BYTES}`
+      : `${srv.downloadUrl}`
+
+    try {
+      while (performance.now() - startTime < PRE_TEST_DURATION_MS) {
+        if (cancelledRef.current) break
+        const res = await fetch(`${chunkUrl}&_=${Date.now()}`, {
+          signal: abortRef.current.signal,
+          cache: 'no-store',
+        })
+        const reader = res.body!.getReader()
+        while (true) {
+          if (cancelledRef.current) { reader.cancel(); break }
+          const { done, value } = await reader.read()
+          if (done) break
+          totalBytes += value?.byteLength ?? 0
+          if (performance.now() - startTime >= PRE_TEST_DURATION_MS) { reader.cancel(); break }
+        }
+        if (performance.now() - startTime >= PRE_TEST_DURATION_MS) break
+      }
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') throw e
+    }
+
+    const elapsed = (performance.now() - startTime) / 1000
+    return totalBytes > 0 ? (totalBytes * 8) / (elapsed * 1e6) : 10
   }
 
   const measureDownload = async (srv: TestServer): Promise<number> => {
@@ -146,14 +194,22 @@ export default function SpeedTestPage() {
     const srv = server
     if (!srv) return
     cancelledRef.current = false
-    setPhase('ping')
+    setPhase('pretest')
     setProgress(0)
     setCurrentSpeed(0)
     setCurrentPing(null)
     setSpeedHistory([])
+    setGaugeMax(MAX_GAUGE)
 
     try {
+      // Pre-test: quick speed estimate to calibrate gauge scale
+      const estimatedMbps = await measurePreTest(srv)
+      if (cancelledRef.current) return
+      setGaugeMax(pickGaugeMax(estimatedMbps))
+
       // Phase 1: Ping
+      setPhase('ping')
+      setProgress(0)
       const { avg: pingAvg, jitter } = await measurePing(srv)
 
       // Phase 2: Download
@@ -194,6 +250,7 @@ export default function SpeedTestPage() {
     setCurrentPing(null)
     setResult(null)
     setSpeedHistory([])
+    setGaugeMax(MAX_GAUGE)
   }
 
   const isRunning = phase !== 'idle' && phase !== 'done'
@@ -204,6 +261,7 @@ export default function SpeedTestPage() {
 
   const phaseLabel = {
     idle: 'Pronto para testar',
+    pretest: 'Detectando velocidade...',
     ping: 'Medindo latência...',
     download: 'Testando download...',
     upload: 'Testando upload...',
@@ -227,11 +285,16 @@ export default function SpeedTestPage() {
           <div className="relative mb-6">
             <SpeedGauge
               value={isRunning ? currentSpeed : (result ? (phase === 'done' && result ? result.download : currentSpeed) : 0)}
-              maxValue={MAX_GAUGE}
+              maxValue={gaugeMax}
               label={phase === 'upload' ? 'UPLOAD' : 'DOWNLOAD'}
               color={gaugeColor}
               size={240}
             />
+            {phase !== 'idle' && phase !== 'done' && (
+              <div className="absolute bottom-0 left-1/2 -translate-x-1/2 text-xs text-gray-600 mono whitespace-nowrap">
+                max {gaugeMax >= 1000 ? `${gaugeMax / 1000} Gbps` : `${gaugeMax} Mbps`}
+              </div>
+            )}
             {phase === 'ping' && currentPing && (
               <div className="absolute inset-0 flex items-center justify-center" style={{ paddingTop: 60 }}>
                 <div className="text-center">
@@ -289,30 +352,39 @@ export default function SpeedTestPage() {
           )}
 
           {/* Phase Indicators */}
-          <div className="flex items-center gap-2 mb-6">
-            {(['ping', 'download', 'upload'] as const).map((p, i) => {
-              const done = phase === 'done' || (phase === 'upload' && p !== 'upload') || (phase === 'download' && p === 'ping')
-              const active = phase === p
-              return (
-                <div key={p} className="flex items-center gap-2">
-                  <div className={clsx(
-                    'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all',
-                    active ? 'bg-cyan-500/20 text-[#00d4ff] border border-cyan-500/30' :
-                    done ? 'bg-green-500/10 text-[#00ff88] border border-green-500/20' :
-                    'bg-white/5 text-gray-600 border border-white/5'
-                  )}>
-                    {done ? <CheckCircle className="w-3 h-3" /> : active ? <Activity className="w-3 h-3 animate-pulse" /> :
-                      p === 'ping' ? <Activity className="w-3 h-3" /> :
-                      p === 'download' ? <Download className="w-3 h-3" /> :
-                      <Upload className="w-3 h-3" />
-                    }
-                    {p === 'ping' ? 'Ping' : p === 'download' ? 'Download' : 'Upload'}
+          {phase === 'pretest' ? (
+            <div className="flex items-center gap-2 mb-6">
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-yellow-500/10 text-[#ffd700] border border-yellow-500/20">
+                <Activity className="w-3 h-3 animate-pulse" />
+                Calibrando medidor...
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 mb-6">
+              {(['ping', 'download', 'upload'] as const).map((p, i) => {
+                const done = phase === 'done' || (phase === 'upload' && p !== 'upload') || (phase === 'download' && p === 'ping')
+                const active = phase === p
+                return (
+                  <div key={p} className="flex items-center gap-2">
+                    <div className={clsx(
+                      'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all',
+                      active ? 'bg-cyan-500/20 text-[#00d4ff] border border-cyan-500/30' :
+                      done ? 'bg-green-500/10 text-[#00ff88] border border-green-500/20' :
+                      'bg-white/5 text-gray-600 border border-white/5'
+                    )}>
+                      {done ? <CheckCircle className="w-3 h-3" /> : active ? <Activity className="w-3 h-3 animate-pulse" /> :
+                        p === 'ping' ? <Activity className="w-3 h-3" /> :
+                        p === 'download' ? <Download className="w-3 h-3" /> :
+                        <Upload className="w-3 h-3" />
+                      }
+                      {p === 'ping' ? 'Ping' : p === 'download' ? 'Download' : 'Upload'}
+                    </div>
+                    {i < 2 && <span className="text-gray-700 text-xs">›</span>}
                   </div>
-                  {i < 2 && <span className="text-gray-700 text-xs">›</span>}
-                </div>
-              )
-            })}
-          </div>
+                )
+              })}
+            </div>
+          )}
 
           {/* Action Buttons */}
           {!isRunning ? (
