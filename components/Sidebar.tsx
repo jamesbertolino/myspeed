@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart3, Gauge, Activity, Wifi, Server, Zap, Radio } from 'lucide-react'
+import { BarChart3, Gauge, Activity, Wifi, Server, Zap, Radio, Settings } from 'lucide-react'
 import clsx from 'clsx'
 
 const nav = [
@@ -11,6 +11,10 @@ const nav = [
   { href: '/network', icon: Activity, label: 'Análise de Rede' },
   { href: '/wifi', icon: Wifi, label: 'Analisador WiFi' },
   { href: '/controllers', icon: Server, label: 'Controladores' },
+]
+
+const navBottom = [
+  { href: '/settings', icon: Settings, label: 'Configurações' },
 ]
 
 export default function Sidebar() {
@@ -51,6 +55,28 @@ export default function Sidebar() {
           )
         })}
       </nav>
+
+      <div className="px-3 pb-1">
+        {navBottom.map(({ href, icon: Icon, label }) => {
+          const active = pathname === href
+          return (
+            <Link
+              key={href}
+              href={href}
+              className={clsx(
+                'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all',
+                active
+                  ? 'bg-cyan-500/10 text-[#00d4ff] border border-cyan-500/20'
+                  : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
+              )}
+            >
+              <Icon className={clsx('w-4 h-4 shrink-0', active && 'text-[#00d4ff]')} />
+              <span className="truncate">{label}</span>
+              {active && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-[#00d4ff] shrink-0" />}
+            </Link>
+          )
+        })}
+      </div>
 
       <div className="px-5 py-4 border-t border-[#1a2744]">
         <div className="flex items-center gap-2 mb-3">

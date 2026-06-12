@@ -8,6 +8,7 @@ import {
 import LatencyChart from '@/components/LatencyChart'
 import StatCard from '@/components/StatCard'
 import { latencyColor, latencyLabel, calcJitter, jitterColor, jitterLabel, formatSpeed } from '@/lib/utils'
+import { loadSettings, AppSettings } from '@/lib/settings'
 import clsx from 'clsx'
 
 interface IPInfo {
@@ -22,13 +23,8 @@ interface IPInfo {
 
 interface LatencyPoint { t: number; latency: number }
 
-const PING_TARGETS = [
-  { label: 'Cloudflare', host: '1.1.1.1' },
-  { label: 'Google', host: '8.8.8.8' },
-  { label: 'Este servidor', host: 'self' },
-]
-
 export default function Dashboard() {
+  const [settings, setSettings] = useState<AppSettings | null>(null)
   const [ipInfo, setIpInfo] = useState<IPInfo | null>(null)
   const [loadingIp, setLoadingIp] = useState(true)
   const [latencyData, setLatencyData] = useState<LatencyPoint[]>([])
@@ -41,6 +37,12 @@ export default function Dashboard() {
   const [lostPackets, setLostPackets] = useState(0)
   const pingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const latencyHistory = useRef<number[]>([])
+
+  useEffect(() => {
+    const s = loadSettings()
+    setSettings(s)
+    setPingTarget(s.pingTargets[0]?.host ?? 'self')
+  }, [])
 
   useEffect(() => {
     const parse = (d: Record<string, unknown>) => ({
@@ -74,10 +76,17 @@ export default function Dashboard() {
   const doPing = useCallback(async () => {
     const t0 = performance.now()
     try {
-      const url = pingTarget === 'self'
-        ? '/api/ping'
-        : `https://${pingTarget === '1.1.1.1' ? 'one.one.one.one' : 'dns.google'}/dns-query?name=a.test&type=A`
-      await fetch(url + `?_=${Date.now()}`, { cache: 'no-store' })
+      let url: string
+      if (pingTarget === 'self') {
+        url = `/api/ping?_=${Date.now()}`
+      } else if (pingTarget === '1.1.1.1') {
+        url = `https://one.one.one.one/dns-query?name=a.test&type=A&_=${Date.now()}`
+      } else if (pingTarget === '8.8.8.8') {
+        url = `https://dns.google/dns-query?name=a.test&type=A&_=${Date.now()}`
+      } else {
+        url = `/api/speedtest/ping?target=${encodeURIComponent(pingTarget)}&_=${Date.now()}`
+      }
+      await fetch(url, { cache: 'no-store' })
       const latency = performance.now() - t0
 
       setSentPackets(s => s + 1)
@@ -108,8 +117,8 @@ export default function Dashboard() {
     setLatencyData([])
     setPingRunning(true)
     doPing()
-    pingRef.current = setInterval(doPing, 1000)
-  }, [doPing])
+    pingRef.current = setInterval(doPing, settings?.pingInterval ?? 1000)
+  }, [doPing, settings?.pingInterval])
 
   const stopPing = useCallback(() => {
     if (pingRef.current) clearInterval(pingRef.current)
@@ -253,7 +262,7 @@ export default function Dashboard() {
                 onChange={e => { setPingTarget(e.target.value); }}
                 className="bg-[#0a1128] border border-[#1a2744] text-gray-300 text-xs rounded-lg px-2 py-1.5 outline-none"
               >
-                {PING_TARGETS.map(t => (
+                {(settings?.pingTargets ?? []).map(t => (
                   <option key={t.host} value={t.host}>{t.label}</option>
                 ))}
               </select>
