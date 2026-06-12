@@ -28,46 +28,109 @@ function radioTypeToWidth(radioType: string): 20 | 40 | 80 | 160 {
   return 20
 }
 
+function extractField(lines: string[], ...patterns: RegExp[]): string | undefined {
+  for (const line of lines) {
+    for (const pattern of patterns) {
+      const m = line.match(pattern)
+      if (m) return m[1]?.trim()
+    }
+  }
+}
+
 async function scanWindows(): Promise<WiFiNetwork[]> {
-  const { stdout } = await execAsync('netsh wlan show networks mode=bssid', { encoding: 'utf8' })
   const networks: WiFiNetwork[] = []
 
-  const blocks = stdout.split(/\nSSID \d+ :/).slice(1)
+  // 1. Connected network via "show interfaces" — has real RSSI + channel
+  try {
+    const { stdout: ifOut } = await execAsync('netsh wlan show interfaces', { encoding: 'utf8' })
+    const lines = ifOut.split('\n').map(l => l.trim()).filter(Boolean)
 
-  for (const block of blocks) {
-    const lines = block.split('\n').map(l => l.trim())
+    // EN: SSID / PT: SSID
+    const ssid = extractField(lines, /^SSID\s*:\s*(?!.*\bBSSID\b)(.+)/i)
+    const bssid = extractField(lines, /^(?:AP\s+)?BSSID\s*:\s*(.+)/i)
+    // EN: Channel / PT: Canal
+    const channelRaw = extractField(lines, /^(?:Channel|Canal)\s*:\s*(\d+)/i)
+    // Prefer Rssi (dBm) over Signal (%) when available
+    const rssiRaw = extractField(lines, /^Rssi\s*:\s*(-?\d+)/i)
+    const signalPctRaw = extractField(lines, /^(?:Signal|Sinal)\s*:\s*(\d+)/i)
+    const radioType = extractField(lines,
+      /^Radio type\s*:\s*(.+)/i,
+      /^Tipo de r[áa]dio\s*:\s*(.+)/i,
+    )?.toLowerCase() ?? ''
+    const auth = extractField(lines,
+      /^Authentication\s*:\s*(.+)/i,
+      /^Autenti(?:cação|cacion)\s*:\s*(.+)/i,
+    )
 
-    const ssid = lines[0]?.trim() || 'Hidden'
-    const auth = lines.find(l => l.startsWith('Authentication'))?.split(':')[1]?.trim()
+    const channel = channelRaw ? parseInt(channelRaw) : 0
+    const signal = rssiRaw
+      ? parseInt(rssiRaw)
+      : signalPctRaw ? signalPctToDbm(parseInt(signalPctRaw)) : -70
 
-    const bssidBlocks = block.split(/BSSID \d+\s*:/).slice(1)
-
-    for (const bssidBlock of bssidBlocks) {
-      const blines = bssidBlock.split('\n').map(l => l.trim())
-      const bssid = blines[0]?.trim()
-
-      const signalLine = blines.find(l => l.startsWith('Signal'))
-      const signalPct = signalLine ? parseInt(signalLine.replace(/\D+/g, '')) : 50
-
-      const channelLine = blines.find(l => l.startsWith('Channel'))
-      const channel = channelLine ? parseInt(channelLine.split(':')[1]?.trim() || '6') : 6
-
-      const radioLine = blines.find(l => l.startsWith('Radio type'))
-      const radioType = radioLine ? radioLine.split(':')[1]?.trim().toLowerCase() : ''
-
-      if (!channel || isNaN(channel)) continue
-
+    if (ssid && channel) {
       networks.push({
         ssid,
         channel,
-        signal: signalPctToDbm(signalPct),
+        signal,
         band: channelToBand(channel),
         width: radioTypeToWidth(radioType),
         security: auth,
         bssid,
       })
     }
-  }
+  } catch { /* interface info unavailable */ }
+
+  // 2. All visible networks via "show networks mode=bssid"
+  try {
+    const { stdout } = await execAsync('netsh wlan show networks mode=bssid', { encoding: 'utf8' })
+    const ssidBlocks = stdout.split(/\nSSID \d+\s*:/).slice(1)
+
+    for (const block of ssidBlocks) {
+      const lines = block.split('\n').map(l => l.trim()).filter(Boolean)
+      const ssid = lines[0] || 'Hidden'
+
+      // Skip if already captured from interfaces
+      if (networks.some(n => n.ssid === ssid)) continue
+
+      const auth = extractField(lines,
+        /^Authentication\s*:\s*(.+)/i,
+        /^Autenti(?:cação|cacion)\s*:\s*(.+)/i,
+      )
+
+      // BSSID sub-blocks
+      const bssidBlocks = block.split(/BSSID \d+\s*:/).slice(1)
+
+      if (bssidBlocks.length > 0) {
+        for (const bssidBlock of bssidBlocks) {
+          const blines = bssidBlock.split('\n').map(l => l.trim()).filter(Boolean)
+          const bssid = blines[0]
+
+          const signalRaw = extractField(blines, /^(?:Signal|Sinal)\s*:\s*(\d+)/i)
+          const channelRaw = extractField(blines, /^(?:Channel|Canal)\s*:\s*(\d+)/i)
+          const radioType = extractField(blines,
+            /^Radio type\s*:\s*(.+)/i,
+            /^Tipo de r[áa]dio\s*:\s*(.+)/i,
+          )?.toLowerCase() ?? ''
+
+          const channel = channelRaw ? parseInt(channelRaw) : 0
+          if (!channel || isNaN(channel)) continue
+
+          networks.push({
+            ssid,
+            channel,
+            signal: signalRaw ? signalPctToDbm(parseInt(signalRaw)) : -70,
+            band: channelToBand(channel),
+            width: radioTypeToWidth(radioType),
+            security: auth,
+            bssid,
+          })
+        }
+      } else {
+        // No BSSID block — add SSID-only entry with unknown channel/signal
+        // Skip: not enough data to plot on channel map
+      }
+    }
+  } catch { /* scan unavailable */ }
 
   return networks
 }
