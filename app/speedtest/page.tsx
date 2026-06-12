@@ -8,6 +8,12 @@ import clsx from 'clsx'
 
 type Phase = 'idle' | 'ping' | 'download' | 'upload' | 'done'
 
+const PING_SAMPLES = 15
+const PING_INTERVAL_MS = 200
+const PHASE_DURATION_MS = 8000   // 8 s per download/upload phase
+const DOWNLOAD_CHUNK_MB = 20
+const UPLOAD_CHUNK_MB = 5
+
 interface Result {
   ping: number
   jitter: number
@@ -25,91 +31,114 @@ export default function SpeedTestPage() {
   const [progress, setProgress] = useState(0)
   const [result, setResult] = useState<Result | null>(null)
   const [history, setHistory] = useState<Result[]>([])
+  const [speedHistory, setSpeedHistory] = useState<number[]>([])
   const abortRef = useRef<AbortController | null>(null)
+  const cancelledRef = useRef(false)
 
   const measurePing = async (): Promise<{ avg: number; jitter: number }> => {
     const samples: number[] = []
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < PING_SAMPLES; i++) {
+      if (cancelledRef.current) throw new Error('cancelled')
       const t0 = performance.now()
       await fetch(`/api/ping?_=${Date.now()}`, { cache: 'no-store' })
       samples.push(performance.now() - t0)
       setCurrentPing(samples[samples.length - 1])
-      setProgress((i + 1) * 10)
-      await new Promise(r => setTimeout(r, 100))
+      setProgress(Math.round(((i + 1) / PING_SAMPLES) * 100))
+      await new Promise(r => setTimeout(r, PING_INTERVAL_MS))
     }
     const avg = samples.reduce((a, b) => a + b, 0) / samples.length
-    const jitter = calcJitter(samples)
-    return { avg, jitter }
+    return { avg, jitter: calcJitter(samples) }
   }
 
   const measureDownload = async (): Promise<number> => {
     abortRef.current = new AbortController()
-    const t0 = performance.now()
-    let bytes = 0
+    const startTime = performance.now()
+    let totalBytes = 0
+    const snap: number[] = []
 
-    const res = await fetch('/api/speedtest/download?size=25', {
-      signal: abortRef.current.signal,
-      cache: 'no-store',
-    })
+    const tick = setInterval(() => {
+      const elapsed = (performance.now() - startTime) / 1000
+      setProgress(Math.min((elapsed / (PHASE_DURATION_MS / 1000)) * 100, 99))
+    }, 100)
 
-    const reader = res.body!.getReader()
-    const total = parseInt(res.headers.get('content-length') || '0')
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      bytes += value?.byteLength ?? 0
-      const elapsed = (performance.now() - t0) / 1000
-      const speed = (bytes * 8) / (elapsed * 1e6)
-      setCurrentSpeed(speed)
-      setProgress(total > 0 ? (bytes / total) * 100 : 50)
+    try {
+      while (performance.now() - startTime < PHASE_DURATION_MS) {
+        if (cancelledRef.current) break
+        const res = await fetch(`/api/speedtest/download?size=${DOWNLOAD_CHUNK_MB}`, {
+          signal: abortRef.current.signal,
+          cache: 'no-store',
+        })
+        const reader = res.body!.getReader()
+        while (true) {
+          if (cancelledRef.current) { reader.cancel(); break }
+          const { done, value } = await reader.read()
+          if (done) break
+          totalBytes += value?.byteLength ?? 0
+          const elapsed = (performance.now() - startTime) / 1000
+          const speed = (totalBytes * 8) / (elapsed * 1e6)
+          setCurrentSpeed(speed)
+          snap.push(speed)
+          setSpeedHistory([...snap.slice(-40)])
+        }
+        if (performance.now() - startTime >= PHASE_DURATION_MS) break
+      }
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') throw e
+    } finally {
+      clearInterval(tick)
     }
 
-    const elapsed = (performance.now() - t0) / 1000
-    return (bytes * 8) / (elapsed * 1e6)
+    setProgress(100)
+    const elapsed = (performance.now() - startTime) / 1000
+    return (totalBytes * 8) / (elapsed * 1e6)
   }
 
   const measureUpload = async (): Promise<number> => {
-    const size = 10 * 1024 * 1024 // 10 MB
-    const chunk = new Uint8Array(size)
-    for (let i = 0; i < size; i++) chunk[i] = i & 0xFF
+    const chunkSize = UPLOAD_CHUNK_MB * 1024 * 1024
+    const chunk = new Uint8Array(chunkSize)
+    for (let i = 0; i < chunkSize; i++) chunk[i] = i & 0xFF
 
-    // Simulate speed reporting during upload
-    let reported = false
-    const t0 = performance.now()
-    const speedTimer = setInterval(() => {
-      const elapsed = (performance.now() - t0) / 1000
-      if (!reported) {
-        const rough = (size * 8) / (elapsed * 1e6) * 0.5 // rough estimate
-        setCurrentSpeed(Math.min(rough, 500))
-        setProgress(Math.min(elapsed * 15, 90))
-      }
-    }, 200)
+    const startTime = performance.now()
+    let totalBytes = 0
+    const snap: number[] = []
+
+    const tick = setInterval(() => {
+      const elapsed = (performance.now() - startTime) / 1000
+      setProgress(Math.min((elapsed / (PHASE_DURATION_MS / 1000)) * 100, 99))
+    }, 100)
 
     try {
-      const res = await fetch('/api/speedtest/upload', {
-        method: 'POST',
-        body: chunk,
-        cache: 'no-store',
-        headers: { 'Content-Type': 'application/octet-stream' },
-      })
-      reported = true
-      clearInterval(speedTimer)
-      const data = await res.json()
-      setCurrentSpeed(data.mbps)
-      setProgress(100)
-      return data.mbps
-    } catch {
-      clearInterval(speedTimer)
-      throw new Error('Upload failed')
+      while (performance.now() - startTime < PHASE_DURATION_MS) {
+        if (cancelledRef.current) break
+        await fetch('/api/speedtest/upload', {
+          method: 'POST',
+          body: chunk,
+          cache: 'no-store',
+          headers: { 'Content-Type': 'application/octet-stream' },
+        })
+        totalBytes += chunkSize
+        const elapsed = (performance.now() - startTime) / 1000
+        const speed = (totalBytes * 8) / (elapsed * 1e6)
+        setCurrentSpeed(speed)
+        snap.push(speed)
+        setSpeedHistory([...snap.slice(-40)])
+      }
+    } finally {
+      clearInterval(tick)
     }
+
+    setProgress(100)
+    const elapsed = (performance.now() - startTime) / 1000
+    return (totalBytes * 8) / (elapsed * 1e6)
   }
 
   const runTest = useCallback(async () => {
+    cancelledRef.current = false
     setPhase('ping')
     setProgress(0)
     setCurrentSpeed(0)
     setCurrentPing(null)
+    setSpeedHistory([])
 
     try {
       // Phase 1: Ping
@@ -119,12 +148,14 @@ export default function SpeedTestPage() {
       setPhase('download')
       setProgress(0)
       setCurrentSpeed(0)
+      setSpeedHistory([])
       const downloadMbps = await measureDownload()
 
       // Phase 3: Upload
       setPhase('upload')
       setProgress(0)
       setCurrentSpeed(0)
+      setSpeedHistory([])
       const uploadMbps = await measureUpload()
 
       const res: Result = {
@@ -143,16 +174,21 @@ export default function SpeedTestPage() {
   }, [])
 
   const reset = () => {
+    cancelledRef.current = true
     abortRef.current?.abort()
     setPhase('idle')
     setCurrentSpeed(0)
     setProgress(0)
     setCurrentPing(null)
     setResult(null)
+    setSpeedHistory([])
   }
 
   const isRunning = phase !== 'idle' && phase !== 'done'
   const gaugeColor = phase === 'download' ? '#00d4ff' : phase === 'upload' ? '#7b2fff' : '#00ff88'
+  const secondsLeft = (phase === 'download' || phase === 'upload')
+    ? Math.max(0, Math.ceil((PHASE_DURATION_MS / 1000) * (1 - progress / 100)))
+    : null
 
   const phaseLabel = {
     idle: 'Pronto para testar',
@@ -194,18 +230,46 @@ export default function SpeedTestPage() {
           </div>
 
           {/* Status */}
-          <div className="text-sm font-medium text-gray-400 mb-4">{phaseLabel}</div>
+          <div className="flex items-center gap-3 mb-4">
+            <span className="text-sm font-medium text-gray-400">{phaseLabel}</span>
+            {secondsLeft !== null && secondsLeft > 0 && (
+              <span className="flex items-center gap-1 text-xs text-gray-600 mono">
+                <Clock className="w-3 h-3" />{secondsLeft}s
+              </span>
+            )}
+          </div>
 
-          {/* Progress Bar */}
+          {/* Progress Bar + Sparkline */}
           {isRunning && (
             <div className="w-full max-w-sm mb-6">
               <div className="progress-bar">
-                <div className="progress-fill" style={{ width: `${progress}%` }} />
+                <div className="progress-fill transition-none" style={{ width: `${progress}%` }} />
               </div>
               <div className="flex justify-between text-xs text-gray-600 mt-1">
                 <span>{phaseLabel}</span>
                 <span>{progress.toFixed(0)}%</span>
               </div>
+              {speedHistory.length > 1 && (phase === 'download' || phase === 'upload') && (
+                <svg className="w-full mt-3" height="36" viewBox={`0 0 ${speedHistory.length - 1} 36`} preserveAspectRatio="none">
+                  <defs>
+                    <linearGradient id="sg" x1="0" x2="0" y1="0" y2="1">
+                      <stop offset="0%" stopColor={gaugeColor} stopOpacity="0.4" />
+                      <stop offset="100%" stopColor={gaugeColor} stopOpacity="0" />
+                    </linearGradient>
+                  </defs>
+                  {(() => {
+                    const max = Math.max(...speedHistory, 1)
+                    const pts = speedHistory.map((v, i) => `${i},${36 - (v / max) * 34}`).join(' ')
+                    const area = `0,36 ${pts} ${speedHistory.length - 1},36`
+                    return (
+                      <>
+                        <polygon points={area} fill="url(#sg)" />
+                        <polyline points={pts} fill="none" stroke={gaugeColor} strokeWidth="1.5" strokeLinejoin="round" />
+                      </>
+                    )
+                  })()}
+                </svg>
+              )}
             </div>
           )}
 
