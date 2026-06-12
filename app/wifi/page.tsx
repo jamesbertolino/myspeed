@@ -1,10 +1,21 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
-import { Wifi, Plus, Trash2, Info, CheckCircle, AlertTriangle, Radio, ScanLine, RefreshCw, Puzzle } from 'lucide-react'
+import { Wifi, Plus, Trash2, Info, CheckCircle, AlertTriangle, Radio, ScanLine, RefreshCw, Puzzle, Sparkles, ShieldCheck, ShieldAlert, ShieldX, TrendingUp } from 'lucide-react'
 import WiFiChannelMap, { WiFiNetwork } from '@/components/WiFiChannelMap'
 import { NON_OVERLAPPING_24, NON_OVERLAPPING_5 } from '@/lib/utils'
 import clsx from 'clsx'
+
+interface AIAnalysis {
+  summary: string
+  score: number
+  scoreLabel: string
+  recommendations: Array<{ priority: 'high' | 'medium' | 'low'; title: string; detail: string }>
+  bestChannel24: number
+  bestChannel5: number
+  congestion24: 'low' | 'medium' | 'high'
+  congestion5: 'low' | 'medium' | 'high'
+}
 
 const CHANNELS_24 = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
 const CHANNELS_5 = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165]
@@ -45,6 +56,8 @@ export default function WiFiPage() {
   const [scanError, setScanError] = useState<string | null>(null)
   const [isRealData, setIsRealData] = useState(false)
   const [extensionReady, setExtensionReady] = useState(false)
+  const [aiAnalysis, setAiAnalysis] = useState<AIAnalysis | null>(null)
+  const [analyzing, setAnalyzing] = useState(false)
 
   // Detect if the MySpeed WiFi extension is installed and active
   useEffect(() => {
@@ -75,6 +88,7 @@ export default function WiFiPage() {
         if (extNetworks) {
           setNetworks(extNetworks)
           setIsRealData(true)
+          runAIAnalysis(extNetworks)
           return
         }
       }
@@ -87,6 +101,7 @@ export default function WiFiPage() {
       } else if (data.networks?.length > 0) {
         setNetworks(data.networks)
         setIsRealData(true)
+        runAIAnalysis(data.networks)
       } else {
         setScanError('Nenhuma rede encontrada. Verifique se o WiFi está ativo.')
       }
@@ -97,6 +112,21 @@ export default function WiFiPage() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [extensionReady])
+
+  const runAIAnalysis = useCallback(async (nets: WiFiNetwork[]) => {
+    setAnalyzing(true)
+    setAiAnalysis(null)
+    try {
+      const res = await fetch('/api/wifi/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ networks: nets }),
+      })
+      const data = await res.json()
+      if (data.analysis) setAiAnalysis(data.analysis)
+    } catch { /* análise silenciosa — não bloqueia o scan */ }
+    finally { setAnalyzing(false) }
+  }, [])
 
   const currentBandNets = networks.filter(n => n.band === band)
   const recommended = bestChannel(networks, band)
@@ -406,6 +436,96 @@ export default function WiFiPage() {
           </table>
         </div>
       </div>
+
+      {/* AI Analysis Panel */}
+      {(analyzing || aiAnalysis) && (
+        <div className="card p-5 mt-4">
+          <div className="flex items-center gap-2 mb-4">
+            <Sparkles className="w-4 h-4 text-purple-400" />
+            <h3 className="text-sm font-semibold text-white">Análise com IA</h3>
+            {analyzing && <span className="tag tag-purple ml-auto animate-pulse">Analisando...</span>}
+          </div>
+
+          {analyzing && (
+            <div className="space-y-3">
+              {[...Array(3)].map((_, i) => (
+                <div key={i} className="h-4 bg-[#1a2744] rounded animate-pulse" style={{ width: `${70 + i * 10}%` }} />
+              ))}
+            </div>
+          )}
+
+          {aiAnalysis && !analyzing && (
+            <div className="space-y-5">
+              {/* Score + Summary */}
+              <div className="flex items-start gap-4">
+                <div className="shrink-0 text-center">
+                  <div
+                    className="w-16 h-16 rounded-full flex items-center justify-center border-2 font-bold text-lg"
+                    style={{
+                      borderColor: aiAnalysis.score >= 75 ? '#00ff88' : aiAnalysis.score >= 50 ? '#ffd700' : '#ff4d4d',
+                      color: aiAnalysis.score >= 75 ? '#00ff88' : aiAnalysis.score >= 50 ? '#ffd700' : '#ff4d4d',
+                      background: aiAnalysis.score >= 75 ? 'rgba(0,255,136,0.05)' : aiAnalysis.score >= 50 ? 'rgba(255,215,0,0.05)' : 'rgba(255,77,77,0.05)',
+                    }}
+                  >
+                    {aiAnalysis.score}
+                  </div>
+                  <p className="text-xs mt-1" style={{ color: aiAnalysis.score >= 75 ? '#00ff88' : aiAnalysis.score >= 50 ? '#ffd700' : '#ff4d4d' }}>
+                    {aiAnalysis.scoreLabel}
+                  </p>
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm text-gray-300 leading-relaxed">{aiAnalysis.summary}</p>
+                  <div className="flex gap-3 mt-3">
+                    <div className="bg-[#050a1a] border border-[#1a2744] rounded-lg px-3 py-1.5 text-xs">
+                      <span className="text-gray-500">Melhor 2.4GHz</span>
+                      <span className="ml-2 text-cyan-400 font-bold">CH {aiAnalysis.bestChannel24}</span>
+                    </div>
+                    <div className="bg-[#050a1a] border border-[#1a2744] rounded-lg px-3 py-1.5 text-xs">
+                      <span className="text-gray-500">Melhor 5GHz</span>
+                      <span className="ml-2 text-cyan-400 font-bold">CH {aiAnalysis.bestChannel5}</span>
+                    </div>
+                    <div className="bg-[#050a1a] border border-[#1a2744] rounded-lg px-3 py-1.5 text-xs">
+                      <span className="text-gray-500">Congesto 2.4</span>
+                      <span className={clsx('ml-2 font-bold',
+                        aiAnalysis.congestion24 === 'low' ? 'text-green-400' :
+                        aiAnalysis.congestion24 === 'medium' ? 'text-yellow-400' : 'text-red-400'
+                      )}>
+                        {aiAnalysis.congestion24 === 'low' ? 'Baixo' : aiAnalysis.congestion24 === 'medium' ? 'Médio' : 'Alto'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Recommendations */}
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <TrendingUp className="w-3.5 h-3.5 text-gray-400" />
+                  <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Recomendações</span>
+                </div>
+                <div className="space-y-2">
+                  {aiAnalysis.recommendations.map((rec, i) => {
+                    const Icon = rec.priority === 'high' ? ShieldX : rec.priority === 'medium' ? ShieldAlert : ShieldCheck
+                    const color = rec.priority === 'high' ? '#ff4d4d' : rec.priority === 'medium' ? '#ffd700' : '#00ff88'
+                    const bg = rec.priority === 'high' ? 'rgba(255,77,77,0.05)' : rec.priority === 'medium' ? 'rgba(255,215,0,0.05)' : 'rgba(0,255,136,0.05)'
+                    const border = rec.priority === 'high' ? 'rgba(255,77,77,0.2)' : rec.priority === 'medium' ? 'rgba(255,215,0,0.2)' : 'rgba(0,255,136,0.2)'
+                    return (
+                      <div key={i} className="rounded-lg px-3 py-2.5 border flex items-start gap-3"
+                        style={{ background: bg, borderColor: border }}>
+                        <Icon className="w-4 h-4 mt-0.5 shrink-0" style={{ color }} />
+                        <div>
+                          <p className="text-sm font-semibold" style={{ color }}>{rec.title}</p>
+                          <p className="text-xs text-gray-400 mt-0.5">{rec.detail}</p>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
