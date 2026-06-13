@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Server, ChevronDown, ChevronUp, Wifi, Loader2 } from 'lucide-react'
+import { Server, ChevronDown, ChevronUp, Wifi, Loader2, Globe } from 'lucide-react'
 import { TestServer } from '@/lib/servers'
 import { latencyColor } from '@/lib/utils'
 import clsx from 'clsx'
@@ -17,12 +17,56 @@ interface ServerWithPing extends TestServer {
   pinging?: boolean
 }
 
+interface StnetServer {
+  id: string
+  name: string
+  sponsor: string
+  country: string
+  cc: string
+  host: string
+  lat: string
+  lon: string
+  distance: number
+}
+
+type Tab = 'builtin' | 'speedtest'
+
+function stnetToTestServer(s: StnetServer): TestServer {
+  const baseUrl = s.host.startsWith('http') ? s.host : `https://${s.host}`
+  return {
+    id: `stnet-${s.id}`,
+    name: `${s.sponsor}`,
+    location: `${s.name}, ${s.country}`,
+    flag: countryFlag(s.cc),
+    provider: 'Speedtest.net',
+    downloadUrl: `/api/speedtest/download?remote=${encodeURIComponent(`${baseUrl}/download?size=25000000`)}`,
+    uploadUrl: '/api/speedtest/upload',
+    pingUrl: `/api/speedtest/ping?target=${encodeURIComponent(s.host.split(':')[0])}`,
+    cors: false,
+  }
+}
+
+function countryFlag(cc: string): string {
+  if (!cc || cc.length !== 2) return '🌐'
+  return String.fromCodePoint(...[...cc.toUpperCase()].map(c => 0x1F1E6 + c.charCodeAt(0) - 65))
+}
+
 export default function ServerSelector({ selected, onChange, disabled }: Props) {
   const [open, setOpen] = useState(false)
+  const [tab, setTab] = useState<Tab>('builtin')
+
+  // Built-in servers
   const [servers, setServers] = useState<ServerWithPing[]>([])
   const [cfPop, setCfPop] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
+  // Speedtest.net servers
+  const [stnetServers, setStnetServers] = useState<(StnetServer & { pinging?: boolean; ping?: number })[]>([])
+  const [stnetLoading, setStnetLoading] = useState(false)
+  const [stnetError, setStnetError] = useState<string | null>(null)
+  const [stnetFetched, setStnetFetched] = useState(false)
+
+  // Load built-in servers + ping them
   useEffect(() => {
     fetch('/api/speedtest/servers')
       .then(r => r.json())
@@ -31,14 +75,9 @@ export default function ServerSelector({ selected, onChange, disabled }: Props) 
         setServers(list.map(s => ({ ...s, pinging: true })))
         setLoading(false)
 
-        // Measure ping for each server in parallel
         list.forEach((s, i) => {
-          const pingUrl = s.cors
-            ? `${s.pingUrl}&_=${Date.now()}`
-            : `${s.pingUrl}&_=${Date.now()}`
-
           const t0 = performance.now()
-          fetch(pingUrl, { cache: 'no-store' })
+          fetch(`${s.pingUrl}&_=${Date.now()}`, { cache: 'no-store' })
             .then(() => {
               const ms = Math.round(performance.now() - t0)
               setServers(prev => prev.map((p, j) => j === i ? { ...p, ping: ms, pinging: false } : p))
@@ -51,7 +90,7 @@ export default function ServerSelector({ selected, onChange, disabled }: Props) 
       .catch(() => setLoading(false))
   }, [])
 
-  // Auto-select the lowest-ping server once all pings are done
+  // Auto-select lowest-ping built-in server once
   useEffect(() => {
     const done = servers.every(s => !s.pinging)
     if (!done || servers.length === 0 || selected) return
@@ -59,35 +98,78 @@ export default function ServerSelector({ selected, onChange, disabled }: Props) 
     if (best) onChange(best)
   }, [servers, selected, onChange])
 
+  // Load Speedtest.net servers when tab is opened
+  function loadStnet() {
+    if (stnetFetched) return
+    setStnetLoading(true)
+    setStnetError(null)
+
+    // Try to get user coords for nearest servers
+    const fetchServers = (lat?: number, lon?: number) => {
+      const params = lat != null ? `?lat=${lat}&lon=${lon}&limit=30` : '?limit=30'
+      fetch(`/api/speedtest/stnet-servers${params}`)
+        .then(r => r.json())
+        .then(({ servers: list, error }: { servers: StnetServer[]; error?: string }) => {
+          if (error && !list?.length) { setStnetError(error); return }
+          setStnetServers(list.map(s => ({ ...s, pinging: true })))
+          setStnetFetched(true)
+          // Ping each
+          list.forEach((s, i) => {
+            const t0 = performance.now()
+            const pingUrl = `/api/speedtest/ping?target=${encodeURIComponent(s.host.split(':')[0])}&_=${Date.now()}`
+            fetch(pingUrl, { cache: 'no-store' })
+              .then(() => {
+                const ms = Math.round(performance.now() - t0)
+                setStnetServers(prev => prev.map((p, j) => j === i ? { ...p, ping: ms, pinging: false } : p))
+              })
+              .catch(() => {
+                setStnetServers(prev => prev.map((p, j) => j === i ? { ...p, ping: 9999, pinging: false } : p))
+              })
+          })
+        })
+        .catch(e => setStnetError(String(e)))
+        .finally(() => setStnetLoading(false))
+    }
+
+    navigator.geolocation?.getCurrentPosition(
+      pos => fetchServers(pos.coords.latitude, pos.coords.longitude),
+      ()  => fetchServers(),
+      { timeout: 3000 }
+    ) ?? fetchServers()
+  }
+
   const currentServer: ServerWithPing | null = selected
     ? (servers.find(s => s.id === selected.id) ?? { ...selected })
     : (servers[0] ?? null)
+
+  const isStnetSelected = selected?.id.startsWith('stnet-')
 
   return (
     <div className="card p-4 mb-4">
       <button
         className="w-full flex items-center gap-3 text-left"
-        onClick={() => !disabled && setOpen(o => !o)}
+        onClick={() => { if (!disabled) setOpen(o => !o) }}
         disabled={disabled}
       >
         <Server className="w-4 h-4 text-cyan-400 shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-0.5">Servidor de Teste</div>
-          {loading ? (
+          {loading && !isStnetSelected ? (
             <div className="flex items-center gap-2 text-sm text-gray-400">
               <Loader2 className="w-3 h-3 animate-spin" /> Detectando servidores...
             </div>
-          ) : currentServer ? (
+          ) : selected ? (
             <div className="flex items-center gap-2">
-              <span className="text-base">{currentServer.flag}</span>
-              <span className="text-sm font-semibold text-white truncate">{currentServer.name}</span>
-              <span className="text-xs text-gray-500 truncate">{currentServer.location}</span>
-              {currentServer.ping && currentServer.ping < 9999 && (
-                <span className="text-xs mono shrink-0" style={{ color: latencyColor(currentServer.ping) }}>
-                  {currentServer.ping}ms
-                </span>
-              )}
-              {cfPop && currentServer.id === 'cloudflare' && (
+              <span className="text-base">{selected.flag}</span>
+              <span className="text-sm font-semibold text-white truncate">{selected.name}</span>
+              <span className="text-xs text-gray-500 truncate">{selected.location}</span>
+              {isStnetSelected
+                ? <span className="tag tag-cyan shrink-0">Speedtest.net</span>
+                : currentServer?.ping && currentServer.ping < 9999
+                  ? <span className="text-xs mono shrink-0" style={{ color: latencyColor(currentServer.ping) }}>{currentServer.ping}ms</span>
+                  : null
+              }
+              {cfPop && selected.id === 'cloudflare' && (
                 <span className="tag tag-cyan shrink-0">{cfPop}</span>
               )}
             </div>
@@ -97,39 +179,110 @@ export default function ServerSelector({ selected, onChange, disabled }: Props) 
       </button>
 
       {open && !disabled && (
-        <div className="mt-3 space-y-1 border-t border-[#1a2744] pt-3">
-          {servers.map(s => {
-            const isSelected = selected?.id === s.id
-            const pingOk = s.ping !== undefined && s.ping < 9999
-            return (
-              <button
-                key={s.id}
-                onClick={() => { onChange(s); setOpen(false) }}
-                className={clsx(
-                  'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-all',
-                  isSelected
-                    ? 'bg-cyan-500/10 border border-cyan-500/30'
-                    : 'hover:bg-white/5 border border-transparent'
-                )}
-              >
-                <span className="text-base w-5 text-center shrink-0">{s.flag}</span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold text-white">{s.name}</div>
-                  <div className="text-xs text-gray-500">{s.provider} · {s.location}</div>
+        <div className="mt-3 border-t border-[#1a2744] pt-3">
+          {/* Tabs */}
+          <div className="flex gap-1 mb-3">
+            <button
+              onClick={() => setTab('builtin')}
+              className={clsx('flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all',
+                tab === 'builtin' ? 'bg-cyan-500/10 border border-cyan-500/30 text-[#00d4ff]' : 'text-gray-500 hover:text-gray-300')}
+            >
+              <Server className="w-3 h-3" /> Embutidos
+            </button>
+            <button
+              onClick={() => { setTab('speedtest'); loadStnet() }}
+              className={clsx('flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all',
+                tab === 'speedtest' ? 'bg-cyan-500/10 border border-cyan-500/30 text-[#00d4ff]' : 'text-gray-500 hover:text-gray-300')}
+            >
+              <Globe className="w-3 h-3" /> Speedtest.net
+            </button>
+          </div>
+
+          {/* Built-in list */}
+          {tab === 'builtin' && (
+            <div className="space-y-1">
+              {servers.map(s => {
+                const isSelected = selected?.id === s.id
+                const pingOk = s.ping !== undefined && s.ping < 9999
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => { onChange(s); setOpen(false) }}
+                    className={clsx(
+                      'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-all',
+                      isSelected ? 'bg-cyan-500/10 border border-cyan-500/30' : 'hover:bg-white/5 border border-transparent'
+                    )}
+                  >
+                    <span className="text-base w-5 text-center shrink-0">{s.flag}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold text-white">{s.name}</div>
+                      <div className="text-xs text-gray-500">{s.provider} · {s.location}</div>
+                    </div>
+                    <div className="shrink-0 w-14 text-right">
+                      {s.pinging ? (
+                        <Loader2 className="w-3 h-3 animate-spin text-gray-600 ml-auto" />
+                      ) : pingOk ? (
+                        <span className="text-xs mono" style={{ color: latencyColor(s.ping!) }}>{s.ping}ms</span>
+                      ) : (
+                        <span className="text-xs text-gray-600">—</span>
+                      )}
+                    </div>
+                    {isSelected && <Wifi className="w-3.5 h-3.5 text-cyan-400 shrink-0" />}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Speedtest.net list */}
+          {tab === 'speedtest' && (
+            <div>
+              {stnetLoading && (
+                <div className="flex items-center gap-2 text-sm text-gray-400 py-4 justify-center">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Buscando servidores Speedtest.net...
                 </div>
-                <div className="shrink-0 w-14 text-right">
-                  {s.pinging ? (
-                    <Loader2 className="w-3 h-3 animate-spin text-gray-600 ml-auto" />
-                  ) : pingOk ? (
-                    <span className="text-xs mono" style={{ color: latencyColor(s.ping!) }}>{s.ping}ms</span>
-                  ) : (
-                    <span className="text-xs text-gray-600">—</span>
-                  )}
-                </div>
-                {isSelected && <Wifi className="w-3.5 h-3.5 text-cyan-400 shrink-0" />}
-              </button>
-            )
-          })}
+              )}
+              {stnetError && (
+                <div className="text-xs text-red-400 py-3 text-center">{stnetError}</div>
+              )}
+              {!stnetLoading && !stnetError && stnetServers.length === 0 && stnetFetched && (
+                <div className="text-xs text-gray-500 py-3 text-center">Nenhum servidor encontrado</div>
+              )}
+              <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
+                {stnetServers.map((s) => {
+                  const srv = stnetToTestServer(s)
+                  const isSelected = selected?.id === srv.id
+                  const pingOk = s.ping !== undefined && s.ping < 9999
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => { onChange(srv); setOpen(false) }}
+                      className={clsx(
+                        'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-all',
+                        isSelected ? 'bg-cyan-500/10 border border-cyan-500/30' : 'hover:bg-white/5 border border-transparent'
+                      )}
+                    >
+                      <span className="text-base w-5 text-center shrink-0">{countryFlag(s.cc)}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-semibold text-white truncate">{s.sponsor}</div>
+                        <div className="text-xs text-gray-500 truncate">{s.name}, {s.country} · {Math.round(s.distance)} km</div>
+                      </div>
+                      <div className="shrink-0 w-14 text-right">
+                        {s.pinging ? (
+                          <Loader2 className="w-3 h-3 animate-spin text-gray-600 ml-auto" />
+                        ) : pingOk ? (
+                          <span className="text-xs mono" style={{ color: latencyColor(s.ping!) }}>{s.ping}ms</span>
+                        ) : (
+                          <span className="text-xs text-gray-600">—</span>
+                        )}
+                      </div>
+                      {isSelected && <Wifi className="w-3.5 h-3.5 text-cyan-400 shrink-0" />}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
