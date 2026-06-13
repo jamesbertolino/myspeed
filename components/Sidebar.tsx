@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart3, Gauge, Activity, Wifi, Server, Zap, Radio, Settings, Menu, X, Monitor } from 'lucide-react'
+import { BarChart3, Gauge, Activity, Wifi, Server, Zap, Radio, Settings, Menu, X, Monitor, Shield } from 'lucide-react'
 import clsx from 'clsx'
 
 const nav = [
@@ -13,6 +13,7 @@ const nav = [
   { href: '/wifi', icon: Wifi, label: 'Analisador WiFi' },
   { href: '/devices', icon: Monitor, label: 'Dispositivos' },
   { href: '/controllers', icon: Server, label: 'Controladores' },
+  { href: '/security', icon: Shield, label: 'Centro de Segurança' },
 ]
 
 const navBottom = [
@@ -87,7 +88,7 @@ function SidebarStatus() {
         </div>
         <div className="flex justify-between text-[11px]">
           <span className="text-gray-500">Versão</span>
-          <span className="text-gray-400">v1.4.2</span>
+          <span className="text-gray-400">v2.0.0</span>
         </div>
       </div>
     </div>
