@@ -159,11 +159,15 @@ export default function SpeedTestPage() {
     return (totalBytes * 8) / (elapsed * 1e6)
   }
 
-  const measureUpload = async (srv: TestServer): Promise<number> => {
+  const measureUpload = async (_srv: TestServer): Promise<number> => {
+    // Always upload to Cloudflare __up directly from the browser.
+    // multipart/form-data is a CORS "simple request" — no preflight, no CORS block.
+    // Using the local /api proxy would measure browser→Vercel CDN edge (artificially fast).
     const chunk = new Uint8Array(UPLOAD_CHUNK_BYTES)
     for (let i = 0; i < chunk.length; i += 65536) {
       crypto.getRandomValues(chunk.subarray(i, Math.min(i + 65536, chunk.length)))
     }
+    const blob = new Blob([chunk])
 
     const startTime = performance.now()
     let totalBytes = 0
@@ -177,10 +181,11 @@ export default function SpeedTestPage() {
     try {
       while (performance.now() - startTime < PHASE_DURATION_MS) {
         if (cancelledRef.current) break
-        await fetch('/api/speedtest/upload', {
+        const form = new FormData()
+        form.append('file', blob)
+        await fetch(`https://speed.cloudflare.com/__up?_=${Date.now()}`, {
           method: 'POST',
-          body: chunk,
-          headers: { 'Content-Type': 'application/octet-stream' },
+          body: form,
         })
         totalBytes += UPLOAD_CHUNK_BYTES
         const elapsed = (performance.now() - startTime) / 1000
