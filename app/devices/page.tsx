@@ -4,7 +4,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import {
   Monitor, ScanLine, Shield, ShieldAlert, ShieldX, ShieldCheck,
   Sparkles, RefreshCw, Terminal, Wifi, ChevronDown, ChevronUp,
-  Server, Cpu, AlertTriangle, CheckCircle, Clock, Network,
+  Server, Cpu, AlertTriangle, CheckCircle, Clock, Network, Router,
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -43,6 +43,16 @@ interface AIAnalysis {
     title: string
     detail: string
   }>
+}
+
+// ── Types ──────────────────────────────────────────────────────────────────────
+
+interface NetworkIface {
+  name: string
+  address: string
+  subnet: string
+  netmask: string
+  mac: string
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -292,7 +302,22 @@ export default function DevicesPage() {
   const [analyzeError, setAnalyzeError] = useState<string | null>(null)
   const [agentReady, setAgentReady] = useState(false)
   const [agentChecked, setAgentChecked] = useState(false)
+  const [interfaces, setInterfaces] = useState<NetworkIface[]>([])
+  const [selectedSubnet, setSelectedSubnet] = useState<string>('')
   const abortRef = useRef<AbortController | null>(null)
+
+  // Load available network interfaces
+  useEffect(() => {
+    fetch('/api/devices/interfaces')
+      .then(r => r.json())
+      .then(({ interfaces: ifaces }: { interfaces: NetworkIface[] }) => {
+        setInterfaces(ifaces)
+        if (ifaces.length > 0 && !selectedSubnet) {
+          setSelectedSubnet(ifaces[0].subnet)
+        }
+      })
+      .catch(() => {})
+  }, [])
 
   // Check for local agent
   useEffect(() => {
@@ -332,7 +357,8 @@ export default function DevicesPage() {
     }
   }, [])
 
-  const startScan = useCallback(async () => {
+  const startScan = useCallback(async (subnet?: string) => {
+    subnet = subnet ?? selectedSubnet
     abortRef.current?.abort()
     const abort = new AbortController()
     abortRef.current = abort
@@ -353,9 +379,15 @@ export default function DevicesPage() {
     try {
       // Prefer local agent
       if (agentReady) {
-        res = await fetch(`http://localhost:${AGENT_PORT}/devices`, { signal: abort.signal })
+        const agentUrl = subnet
+          ? `http://localhost:${AGENT_PORT}/devices?subnet=${subnet}`
+          : `http://localhost:${AGENT_PORT}/devices`
+        res = await fetch(agentUrl, { signal: abort.signal })
       } else {
-        res = await fetch('/api/devices/scan', { signal: abort.signal })
+        const scanUrl = subnet
+          ? `/api/devices/scan?subnet=${subnet}`
+          : '/api/devices/scan'
+        res = await fetch(scanUrl, { signal: abort.signal })
       }
 
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
@@ -382,7 +414,7 @@ export default function DevicesPage() {
     } finally {
       setScanning(false)
     }
-  }, [agentReady, handleEvent])
+  }, [agentReady, handleEvent, selectedSubnet])
 
   const runAIAnalysis = useCallback(async () => {
     if (!devices.length) return
@@ -428,7 +460,7 @@ export default function DevicesPage() {
         </div>
 
         <button
-          onClick={startScan}
+          onClick={() => startScan()}
           disabled={scanning}
           className={clsx(
             'flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all shrink-0',
@@ -443,6 +475,44 @@ export default function DevicesPage() {
           }
         </button>
       </div>
+
+      {/* Interface selector */}
+      {interfaces.length > 0 && (
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-lg bg-[#0b1527] border border-[#1a2744]">
+          <div className="flex items-center gap-2 shrink-0">
+            <Router className="w-4 h-4 text-cyan-400" />
+            <span className="text-sm font-medium text-gray-300">Interface de rede:</span>
+          </div>
+          <div className="flex flex-wrap gap-2 flex-1">
+            {interfaces.map(iface => (
+              <button
+                key={iface.subnet}
+                disabled={scanning}
+                onClick={() => setSelectedSubnet(iface.subnet)}
+                className={clsx(
+                  'flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all',
+                  selectedSubnet === iface.subnet
+                    ? 'bg-cyan-500/15 border-cyan-500/40 text-cyan-300'
+                    : 'bg-white/3 border-[#1a2744] text-gray-400 hover:border-cyan-500/30 hover:text-gray-200'
+                )}
+              >
+                <span className={clsx(
+                  'w-1.5 h-1.5 rounded-full shrink-0',
+                  selectedSubnet === iface.subnet ? 'bg-cyan-400' : 'bg-gray-600'
+                )} />
+                <span className="font-mono">{iface.name}</span>
+                <span className="text-gray-500">·</span>
+                <span className="font-mono">{iface.address}</span>
+                <span className="text-gray-500 hidden sm:inline">·</span>
+                <span className="text-gray-500 hidden sm:inline">{iface.subnet}.0/24</span>
+              </button>
+            ))}
+          </div>
+          {interfaces.length === 1 && (
+            <span className="text-[11px] text-gray-600">Apenas uma interface disponível</span>
+          )}
+        </div>
+      )}
 
       {/* Agent status banner */}
       {agentChecked && (
@@ -567,7 +637,7 @@ export default function DevicesPage() {
             conectados à sua rede local e analisar possíveis vulnerabilidades de segurança.
           </p>
           <button
-            onClick={startScan}
+            onClick={() => startScan()}
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-cyan-500 text-black text-sm font-medium hover:bg-cyan-400 active:scale-95 transition-all"
           >
             <ScanLine className="w-4 h-4" />

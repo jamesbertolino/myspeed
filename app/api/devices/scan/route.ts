@@ -107,20 +107,27 @@ function getArpHosts(): Map<string, string | null> {
   return ips
 }
 
-function getLocalSubnet(): { subnet: string; localIp: string } | null {
+function getLocalSubnet(preferSubnet?: string): { subnet: string; localIp: string } | null {
   const ifaces = os.networkInterfaces()
-  for (const name of Object.keys(ifaces)) {
-    for (const iface of (ifaces[name] ?? [])) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        const parts = iface.address.split('.').map(Number)
-        const [a, b] = parts
-        if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) {
-          return { subnet: `${parts[0]}.${parts[1]}.${parts[2]}`, localIp: iface.address }
-        }
+  const candidates: { subnet: string; localIp: string }[] = []
+
+  for (const addrs of Object.values(ifaces)) {
+    for (const iface of (addrs ?? [])) {
+      if (iface.family !== 'IPv4' || iface.internal) continue
+      const parts = iface.address.split('.').map(Number)
+      const [a, b] = parts
+      if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) {
+        candidates.push({ subnet: `${parts[0]}.${parts[1]}.${parts[2]}`, localIp: iface.address })
       }
     }
   }
-  return null
+
+  if (!candidates.length) return null
+  if (preferSubnet) {
+    const match = candidates.find(c => c.subnet === preferSubnet)
+    if (match) return match
+  }
+  return candidates[0]
 }
 
 async function discoverSubnet(
@@ -148,7 +155,10 @@ async function scanDevicePorts(host: string): Promise<PortDef[]> {
   return open.sort((a, b) => a.port - b.port)
 }
 
-export async function GET(_req: NextRequest) {
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url)
+  const preferSubnet = searchParams.get('subnet') ?? undefined
+
   const encoder = new TextEncoder()
 
   const stream = new ReadableStream({
@@ -163,7 +173,7 @@ export async function GET(_req: NextRequest) {
       send({ type: 'start' })
 
       const arpHosts = getArpHosts()
-      const subnetInfo = getLocalSubnet()
+      const subnetInfo = getLocalSubnet(preferSubnet)
 
       if (subnetInfo) {
         send({ type: 'progress', message: `Varrendo ${subnetInfo.subnet}.0/24...` })
