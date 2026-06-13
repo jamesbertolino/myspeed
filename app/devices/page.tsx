@@ -4,7 +4,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import {
   Monitor, ScanLine, Shield, ShieldAlert, ShieldX, ShieldCheck,
   Sparkles, RefreshCw, Terminal, Wifi, ChevronDown, ChevronUp,
-  Server, Cpu, AlertTriangle, CheckCircle, Clock, Network, Router,
+  Server, Cpu, AlertTriangle, CheckCircle, Clock, Network, Router, FileDown,
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -449,6 +449,91 @@ export default function DevicesPage() {
     }
   }, [devices])
 
+  function exportPDF() {
+    const now = new Date().toLocaleString('pt-BR')
+    const riskLabel = (r: string) => ({ critical: 'Crítico', high: 'Alto', medium: 'Médio', low: 'Baixo', none: 'Seguro' }[r] ?? r)
+    const riskColor = (r: string) => ({ critical: '#ef4444', high: '#f97316', medium: '#eab308', low: '#22c55e', none: '#6b7280' }[r] ?? '#6b7280')
+
+    const rows = devices.map(d => `
+      <tr>
+        <td>${d.ip}</td>
+        <td>${d.mac || '—'}</td>
+        <td>${d.hostname || '—'}</td>
+        <td>${d.vendor || '—'}</td>
+        <td style="color:${riskColor(d.riskLevel)};font-weight:600">${riskLabel(d.riskLevel)}</td>
+        <td>${d.openPorts.map(p => `${p.port}/${p.service}`).join(', ') || '—'}</td>
+      </tr>`).join('')
+
+    const aiSection = aiAnalysis ? `
+      <div class="section">
+        <h2>Análise de Segurança — IA</h2>
+        <p><strong>Pontuação: ${aiAnalysis.score}/100 — ${aiAnalysis.scoreLabel}</strong></p>
+        <p>${aiAnalysis.summary}</p>
+        ${aiAnalysis.risks.length ? `<h3>Riscos Identificados</h3>` + aiAnalysis.risks.map(r => `
+          <div class="risk risk-${r.severity}">
+            <strong>[${riskLabel(r.severity)}] ${r.deviceIp} — ${r.title}</strong><br/>
+            ${r.detail}<br/>
+            <em>✓ ${r.fix}</em>
+          </div>`).join('') : ''}
+        ${aiAnalysis.generalRecommendations.length ? `<h3>Recomendações Gerais</h3><ul>` +
+          aiAnalysis.generalRecommendations.map(r => `<li><strong>${r.title}</strong> — ${r.detail}</li>`).join('') + `</ul>` : ''}
+      </div>` : ''
+
+    const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"/>
+    <title>Relatório de Segurança de Rede — ${now}</title>
+    <style>
+      body { font-family: Arial, sans-serif; font-size: 11px; color: #111; margin: 20px; }
+      h1 { font-size: 18px; margin-bottom: 4px; }
+      .meta { color: #555; margin-bottom: 20px; font-size: 10px; }
+      .section { margin-bottom: 24px; }
+      h2 { font-size: 13px; border-bottom: 1px solid #ccc; padding-bottom: 4px; margin-bottom: 8px; }
+      h3 { font-size: 11px; margin: 12px 0 6px; }
+      table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+      th { background: #f0f0f0; text-align: left; padding: 5px 8px; font-size: 10px; border: 1px solid #ddd; }
+      td { padding: 4px 8px; border: 1px solid #eee; vertical-align: top; }
+      tr:nth-child(even) td { background: #fafafa; }
+      .summary { display: flex; gap: 16px; margin-bottom: 16px; }
+      .stat { text-align: center; padding: 8px 16px; border: 1px solid #ddd; border-radius: 4px; }
+      .stat b { display: block; font-size: 20px; }
+      .risk { margin: 6px 0; padding: 6px 10px; border-left: 3px solid #ccc; background: #f9f9f9; font-size: 10px; }
+      .risk-critical { border-color: #ef4444; }
+      .risk-high { border-color: #f97316; }
+      .risk-medium { border-color: #eab308; }
+      .risk-low { border-color: #22c55e; }
+      ul { margin: 4px 0; padding-left: 18px; }
+      li { margin-bottom: 4px; }
+      @media print { body { margin: 0; } }
+    </style></head><body>
+    <h1>Relatório de Segurança de Rede</h1>
+    <div class="meta">Gerado em: ${now} · Total de dispositivos online: ${devices.length}</div>
+
+    <div class="section">
+      <div class="summary">
+        ${Object.entries({ critical: 'Crítico', high: 'Alto', medium: 'Médio', low: 'Baixo', none: 'Seguro' }).map(([k, l]) => {
+          const c = devices.filter(d => d.riskLevel === k).length
+          return `<div class="stat"><b style="color:${riskColor(k)}">${c}</b>${l}</div>`
+        }).join('')}
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Dispositivos Encontrados</h2>
+      <table>
+        <thead><tr><th>IP</th><th>MAC</th><th>Hostname</th><th>Fabricante</th><th>Risco</th><th>Portas Abertas</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    ${aiSection}
+    </body></html>`
+
+    const win = window.open('', '_blank')
+    if (!win) return
+    win.document.write(html)
+    win.document.close()
+    win.focus()
+    setTimeout(() => { win.print() }, 400)
+  }
+
   const riskCounts = devices.reduce((acc, d) => {
     acc[d.riskLevel] = (acc[d.riskLevel] || 0) + 1
     return acc
@@ -472,21 +557,31 @@ export default function DevicesPage() {
           </p>
         </div>
 
-        <button
-          onClick={() => startScan()}
-          disabled={scanning}
-          className={clsx(
-            'flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all shrink-0',
-            scanning
-              ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 cursor-wait'
-              : 'bg-cyan-500 text-black hover:bg-cyan-400 active:scale-95'
+        <div className="flex items-center gap-2">
+          {scanDone && hasDevices && (
+            <button
+              onClick={exportPDF}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium border border-[#1a2744] text-gray-300 hover:text-white hover:bg-white/5 transition-all shrink-0"
+            >
+              <FileDown className="w-4 h-4" /> Exportar PDF
+            </button>
           )}
-        >
-          {scanning
-            ? <><RefreshCw className="w-4 h-4 animate-spin" /> Escaneando...</>
-            : <><ScanLine className="w-4 h-4" /> {hasDevices ? 'Novo Scan' : 'Iniciar Scan'}</>
-          }
-        </button>
+          <button
+            onClick={() => startScan()}
+            disabled={scanning}
+            className={clsx(
+              'flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all shrink-0',
+              scanning
+                ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 cursor-wait'
+                : 'bg-cyan-500 text-black hover:bg-cyan-400 active:scale-95'
+            )}
+          >
+            {scanning
+              ? <><RefreshCw className="w-4 h-4 animate-spin" /> Escaneando...</>
+              : <><ScanLine className="w-4 h-4" /> {hasDevices ? 'Novo Scan' : 'Iniciar Scan'}</>
+            }
+          </button>
+        </div>
       </div>
 
       {/* Interface selector */}

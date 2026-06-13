@@ -130,21 +130,25 @@ function getLocalSubnet(preferSubnet?: string): { subnet: string; localIp: strin
   return candidates[0]
 }
 
+async function isHostOnline(ip: string): Promise<boolean> {
+  const PROBE_PORTS = [80, 443, 22, 8080, 8443, 21, 23, 3389, 53, 139, 445, 3306, 5900]
+  for (const port of PROBE_PORTS) {
+    if (await tcpProbe(ip, port, 500)) return true
+  }
+  return false
+}
+
 async function discoverSubnet(
   subnet: string,
   arpHosts: Map<string, string | null>,
   onFound: (ip: string) => void
 ): Promise<void> {
-  const PROBE_PORTS = [80, 443, 22, 8080, 8443, 21, 23, 3389]
   const allIps: string[] = []
   for (let i = 1; i <= 254; i++) allIps.push(`${subnet}.${i}`)
 
   await parallelBatch(allIps, async (ip) => {
-    if (arpHosts.has(ip)) return
-    for (const port of PROBE_PORTS) {
-      if (await tcpProbe(ip, port, 500)) { onFound(ip); return }
-    }
-  }, 25)
+    if (await isHostOnline(ip)) onFound(ip)
+  }, 30)
 }
 
 async function scanDevicePorts(host: string): Promise<PortDef[]> {
@@ -174,21 +178,28 @@ export async function GET(req: NextRequest) {
 
       const arpHosts = getArpHosts()
       const subnetInfo = getLocalSubnet(preferSubnet)
+      const subnetPrefix = subnetInfo?.subnet
 
+      // Discover all online hosts (TCP probe across full subnet)
+      const onlineHosts = new Map<string, string | null>()
       if (subnetInfo) {
-        send({ type: 'progress', message: `Varrendo ${subnetInfo.subnet}.0/24...` })
-        await discoverSubnet(subnetInfo.subnet, arpHosts, (ip) => {
-          if (!arpHosts.has(ip)) arpHosts.set(ip, null)
+        send({ type: 'progress', message: `Varrendo ${subnetInfo.subnet}.0/24 (apenas online)...` })
+        await discoverSubnet(subnetInfo.subnet, new Map(), (ip) => {
+          onlineHosts.set(ip, arpHosts.get(ip) ?? null)
         })
       }
 
-      // Filter hosts to only those belonging to the selected subnet
-      const subnetPrefix = subnetInfo?.subnet
-      const hosts = Array.from(arpHosts.entries()).filter(([ip]) => {
-        if (!/^[\d.]+$/.test(ip)) return false
-        if (subnetPrefix) return ip.startsWith(subnetPrefix + '.')
-        return true
-      })
+      // Include ARP hosts only if they're confirmed online
+      for (const [ip, mac] of arpHosts.entries()) {
+        if (!/^[\d.]+$/.test(ip)) continue
+        if (subnetPrefix && !ip.startsWith(subnetPrefix + '.')) continue
+        if (!onlineHosts.has(ip)) {
+          // Verify before including
+          if (await isHostOnline(ip)) onlineHosts.set(ip, mac)
+        }
+      }
+
+      const hosts = Array.from(onlineHosts.entries())
       send({ type: 'hosts', count: hosts.length })
 
       let count = 0
