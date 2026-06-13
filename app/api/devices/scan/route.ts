@@ -182,7 +182,13 @@ export async function GET(req: NextRequest) {
         })
       }
 
-      const hosts = Array.from(arpHosts.entries()).filter(([ip]) => /^[\d.]+$/.test(ip))
+      // Filter hosts to only those belonging to the selected subnet
+      const subnetPrefix = subnetInfo?.subnet
+      const hosts = Array.from(arpHosts.entries()).filter(([ip]) => {
+        if (!/^[\d.]+$/.test(ip)) return false
+        if (subnetPrefix) return ip.startsWith(subnetPrefix + '.')
+        return true
+      })
       send({ type: 'hosts', count: hosts.length })
 
       let count = 0
