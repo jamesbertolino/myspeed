@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
-import { Wifi, Plus, Trash2, Info, CheckCircle, AlertTriangle, Radio, ScanLine, RefreshCw, Puzzle, Sparkles, ShieldCheck, ShieldAlert, ShieldX, TrendingUp, Terminal } from 'lucide-react'
+import { Wifi, Plus, Trash2, Info, CheckCircle, AlertTriangle, Radio, ScanLine, RefreshCw, Puzzle, Sparkles, ShieldCheck, ShieldAlert, ShieldX, TrendingUp, Terminal, Smartphone } from 'lucide-react'
 import WiFiChannelMap, { WiFiNetwork } from '@/components/WiFiChannelMap'
 import { NON_OVERLAPPING_24, NON_OVERLAPPING_5 } from '@/lib/utils'
 import clsx from 'clsx'
@@ -235,7 +235,11 @@ export default function WiFiPage() {
           <div className="flex-1 min-w-0">
             <span className="font-semibold text-white">Agente local conectado</span>
             <span className="text-xs text-gray-500 ml-2">
-              {agentPlatform === 'win32' ? 'Windows' : agentPlatform === 'darwin' ? 'macOS' : agentPlatform === 'linux' ? 'Linux' : agentPlatform ?? ''}
+              {agentPlatform === 'win32' ? 'Windows'
+                : agentPlatform === 'darwin' ? 'macOS'
+                : agentPlatform === 'linux' ? 'Linux'
+                : agentPlatform === 'android' ? 'Android (Termux)'
+                : agentPlatform ?? ''}
               {' · '}porta {AGENT_PORT}
             </span>
           </div>
@@ -257,37 +261,77 @@ export default function WiFiPage() {
             <div>
               <span className="font-semibold text-white">Scanner não detectado</span>
               <p className="text-xs text-gray-500 mt-0.5">
-                Escolha uma das opções abaixo para escanear redes reais — funciona mesmo com o app rodando remotamente.
+                Escolha uma opção abaixo — funciona mesmo com o app rodando remotamente.
               </p>
             </div>
           </div>
-          <div className="border-t border-[#1a2744] grid sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-[#1a2744]">
-            {/* Opção 1: Agente local */}
+
+          <div className="border-t border-[#1a2744] divide-y divide-[#1a2744]">
+            {/* PC / Notebook */}
             <div className="px-4 py-3">
               <div className="flex items-center gap-2 mb-2">
-                <Terminal className="w-3.5 h-3.5 text-[#00ff88]" />
-                <span className="text-xs font-semibold text-white uppercase tracking-wider">Opção 1 — Agente Local</span>
+                <Terminal className="w-3.5 h-3.5 text-[#00ff88] shrink-0" />
+                <span className="text-xs font-semibold text-white uppercase tracking-wider">PC / Notebook</span>
                 <span className="tag tag-green text-[10px]">Recomendado</span>
               </div>
-              <p className="text-xs text-gray-500 mb-2">Rode na sua máquina (qualquer SO, sem instalar nada extra):</p>
+              <p className="text-xs text-gray-500 mb-2">
+                Windows, macOS ou Linux — sem instalar nada extra:
+              </p>
               <code className="block bg-[#0a1128] border border-[#1a2744] rounded px-3 py-2 text-[#00ff88] text-xs font-mono">
                 node wifi-agent.js
               </code>
               <p className="text-[11px] text-gray-600 mt-1.5">
-                O arquivo <code className="text-gray-400">wifi-agent.js</code> está na raiz do projeto.
+                Arquivo <code className="text-gray-400">wifi-agent.js</code> na raiz do projeto. Depois abra o MySpeed no mesmo PC.
               </p>
             </div>
-            {/* Opção 2: Extensão Chrome */}
+
+            {/* Android */}
             <div className="px-4 py-3">
               <div className="flex items-center gap-2 mb-2">
-                <Puzzle className="w-3.5 h-3.5 text-[#00d4ff]" />
-                <span className="text-xs font-semibold text-white uppercase tracking-wider">Opção 2 — Extensão Chrome</span>
+                <Smartphone className="w-3.5 h-3.5 text-[#7b2fff] shrink-0" />
+                <span className="text-xs font-semibold text-white uppercase tracking-wider">Android</span>
               </div>
-              <p className="text-xs text-gray-500 mb-1">Instale a extensão em <code className="text-gray-400">extension/</code> e registre o native-host:</p>
+              <p className="text-xs text-gray-500 mb-2">
+                Instale o <strong className="text-gray-300">Termux</strong> + <strong className="text-gray-300">Termux:API</strong> (F-Droid), depois no terminal do Termux:
+              </p>
+              <div className="space-y-1.5">
+                <code className="block bg-[#0a1128] border border-[#1a2744] rounded px-3 py-2 text-[#7b2fff] text-xs font-mono">
+                  pkg install nodejs termux-api
+                </code>
+                <code className="block bg-[#0a1128] border border-[#1a2744] rounded px-3 py-2 text-[#7b2fff] text-xs font-mono">
+                  node wifi-agent.js
+                </code>
+              </div>
+              <p className="text-[11px] text-gray-600 mt-1.5">
+                Abra o Chrome no mesmo celular e acesse o MySpeed — o agente será detectado automaticamente.
+                Conceda permissão de <strong className="text-gray-500">localização</strong> ao Termux:API quando solicitado.
+              </p>
+            </div>
+
+            {/* iOS */}
+            <div className="px-4 py-3 opacity-60">
+              <div className="flex items-center gap-2 mb-1">
+                <Smartphone className="w-3.5 h-3.5 text-gray-500 shrink-0" />
+                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">iPhone / iPad</span>
+                <span className="tag tag-red text-[10px]">Não suportado</span>
+              </div>
+              <p className="text-xs text-gray-600">
+                A Apple não permite scan WiFi em apps ou browsers. Use entrada manual ou acesse pelo PC/Android.
+              </p>
+            </div>
+
+            {/* Windows Extension */}
+            <div className="px-4 py-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Puzzle className="w-3.5 h-3.5 text-[#00d4ff] shrink-0" />
+                <span className="text-xs font-semibold text-white uppercase tracking-wider">Extensão Chrome (Windows)</span>
+              </div>
+              <p className="text-xs text-gray-500 mb-1.5">
+                Alternativa sem terminal — instale a extensão em <code className="text-gray-400">extension/</code> e o native-host:
+              </p>
               <code className="block bg-[#0a1128] border border-[#1a2744] rounded px-3 py-2 text-[#00d4ff] text-xs font-mono">
                 powershell native-host/install.ps1
               </code>
-              <p className="text-[11px] text-gray-600 mt-1.5">Somente Windows + Chrome.</p>
             </div>
           </div>
         </div>

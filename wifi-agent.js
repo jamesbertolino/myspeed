@@ -201,7 +201,51 @@ function scanLinux() {
   })
 }
 
+// Android via Termux + Termux:API app
+// https://wiki.termux.com/wiki/Termux:API  →  pkg install termux-api
+
+function isTermux() {
+  return process.env.TERMUX_VERSION !== undefined ||
+    (process.env.PREFIX || '').includes('com.termux') ||
+    require('fs').existsSync('/data/data/com.termux')
+}
+
+function freqToChannel(freq) {
+  if (freq === 2484) return 14
+  if (freq >= 2412 && freq <= 2472) return Math.round((freq - 2407) / 5)
+  if (freq >= 5160 && freq <= 5885) return Math.round((freq - 5000) / 5)
+  if (freq >= 5955) return Math.round((freq - 5950) / 5) + 1  // 6 GHz band
+  return 0
+}
+
+function scanAndroid() {
+  const raw = execSync('termux-wifi-scaninfo', { encoding: 'utf8', timeout: 12000 })
+  const nets = JSON.parse(raw)
+  if (!Array.isArray(nets)) throw new Error('termux-wifi-scaninfo returned unexpected data')
+  return nets
+    .map(n => {
+      const channel = freqToChannel(n.frequency || 0)
+      if (!channel) return null
+      const band = n.frequency < 3000 ? '2.4' : n.frequency < 5950 ? '5' : '6'
+      const caps = (n.capabilities || '')
+      const security = caps.includes('WPA3') ? 'WPA3' :
+                       caps.includes('WPA2') ? 'WPA2' :
+                       caps.includes('WPA')  ? 'WPA'  : 'Open'
+      return {
+        ssid: n.ssid || 'Hidden',
+        bssid: n.bssid,
+        signal: n.level,
+        channel,
+        band,
+        width: band === '2.4' ? 20 : 80,
+        security,
+      }
+    })
+    .filter(Boolean)
+}
+
 function scan() {
+  if (isTermux()) return scanAndroid()
   if (process.platform === 'win32') return scanWindows()
   if (process.platform === 'darwin') return scanMac()
   return scanLinux()
@@ -267,13 +311,22 @@ server.on('error', (e) => {
 })
 
 server.listen(PORT, '127.0.0.1', () => {
-  const platform = { win32: 'Windows', darwin: 'macOS', linux: 'Linux' }[process.platform] || process.platform
+  const termux = isTermux()
+  const platform = termux ? 'Android (Termux)'
+    : { win32: 'Windows', darwin: 'macOS', linux: 'Linux' }[process.platform] || process.platform
   console.log(`\n╔════════════════════════════════════════════╗`)
-  console.log(`║     MySpeed WiFi Agent — ${platform.padEnd(18)}║`)
+  console.log(`║  MySpeed WiFi Agent — ${platform.padEnd(20)}║`)
   console.log(`╠════════════════════════════════════════════╣`)
   console.log(`║  Escutando em: http://localhost:${PORT}      ║`)
   console.log(`║  Pressione Ctrl+C para encerrar            ║`)
   console.log(`╚════════════════════════════════════════════╝`)
-  console.log(`\n  Abra o MySpeed no navegador e vá para`)
-  console.log(`  a aba WiFi — o agente será detectado\n`)
+  if (termux) {
+    console.log(`\n  Abra o Chrome no mesmo celular e acesse`)
+    console.log(`  o MySpeed — o agente será detectado`)
+    console.log(`\n  Certifique-se que o Termux:API está instalado`)
+    console.log(`  e as permissões de localização concedidas\n`)
+  } else {
+    console.log(`\n  Abra o MySpeed no navegador e vá para`)
+    console.log(`  a aba WiFi — o agente será detectado\n`)
+  }
 })
