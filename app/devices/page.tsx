@@ -306,16 +306,19 @@ export default function DevicesPage() {
   const [selectedSubnet, setSelectedSubnet] = useState<string>('')
   const abortRef = useRef<AbortController | null>(null)
 
-  // Load available network interfaces
+  // Load available network interfaces — prefer agent (local machine) over server API
   useEffect(() => {
-    fetch('/api/devices/interfaces')
-      .then(r => r.json())
-      .then(({ interfaces: ifaces }: { interfaces: NetworkIface[] }) => {
-        setInterfaces(ifaces)
-        if (ifaces.length > 0 && !selectedSubnet) {
-          setSelectedSubnet(ifaces[0].subnet)
-        }
-      })
+    const load = (url: string) =>
+      fetch(url)
+        .then(r => r.json())
+        .then(({ interfaces: ifaces }: { interfaces: NetworkIface[] }) => {
+          if (!ifaces?.length) throw new Error('empty')
+          setInterfaces(ifaces)
+          if (!selectedSubnet) setSelectedSubnet(ifaces[0].subnet)
+        })
+
+    load(`http://localhost:${AGENT_PORT}/interfaces`)
+      .catch(() => load('/api/devices/interfaces'))
       .catch(() => {})
   }, [])
 
@@ -329,6 +332,16 @@ export default function DevicesPage() {
         })
         if (!cancelled && res.ok) {
           setAgentReady(true)
+          // Reload interfaces from agent (local machine) now that it's available
+          fetch(`http://localhost:${AGENT_PORT}/interfaces`)
+            .then(r => r.json())
+            .then(({ interfaces: ifaces }: { interfaces: NetworkIface[] }) => {
+              if (!cancelled && ifaces?.length) {
+                setInterfaces(ifaces)
+                setSelectedSubnet(prev => prev || ifaces[0].subnet)
+              }
+            })
+            .catch(() => {})
         }
       } catch (_) {}
       if (!cancelled) setAgentChecked(true)

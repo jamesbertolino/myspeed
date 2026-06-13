@@ -530,6 +530,25 @@ const server = http.createServer((req, res) => {
     return
   }
 
+  // Network interfaces
+  if (url === '/interfaces') {
+    const os = require('os')
+    const ifaces = os.networkInterfaces()
+    const result = []
+    for (const [name, addrs] of Object.entries(ifaces)) {
+      for (const iface of (addrs ?? [])) {
+        if (iface.family !== 'IPv4' || iface.internal) continue
+        const parts = iface.address.split('.').map(Number)
+        const [a, b] = parts
+        const isPrivate = a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+        if (!isPrivate) continue
+        result.push({ name, address: iface.address, subnet: `${parts[0]}.${parts[1]}.${parts[2]}`, netmask: iface.netmask, mac: iface.mac })
+      }
+    }
+    json(res, { interfaces: result })
+    return
+  }
+
   // Scan de dispositivos (NDJSON streaming)
   if (url === '/devices') {
     handleDevices(req, res)
