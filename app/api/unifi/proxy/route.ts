@@ -4,10 +4,10 @@ import http from 'http'
 
 export const runtime = 'nodejs'
 
-function httpsRequest(
+function rawRequest(
   url: string,
   options: { method: string; headers: Record<string, string>; body?: string }
-): Promise<{ statusCode: number; headers: Record<string, string>; data: string }> {
+): Promise<{ statusCode: number; headers: Record<string, string[]>; data: string }> {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url)
     const isHttps = parsed.protocol === 'https:'
@@ -20,14 +20,14 @@ function httpsRequest(
         path: parsed.pathname + parsed.search,
         method: options.method,
         headers: options.headers,
-        rejectUnauthorized: false, // allow self-signed certs (UniFi default)
+        rejectUnauthorized: false,
       },
       res => {
         let data = ''
         res.on('data', chunk => { data += chunk })
         res.on('end', () => resolve({
           statusCode: res.statusCode ?? 0,
-          headers: res.headers as Record<string, string>,
+          headers: res.headers as Record<string, string[]>,
           data,
         }))
       }
@@ -38,21 +38,36 @@ function httpsRequest(
   })
 }
 
-async function unifiRequest(
-  controllerUrl: string,
+function parseCookies(headers: Record<string, string[]>): string {
+  const raw = headers['set-cookie']
+  if (!raw) return ''
+  const arr = Array.isArray(raw) ? raw : [raw]
+  return arr.map(c => c.split(';')[0]).join('; ')
+}
+
+function getCsrfFromCookies(cookieHeader: string): string | null {
+  // UniFi OS stores a JWT in TOKEN cookie; extract X-Csrf-Token from response header or derive from cookie
+  const match = cookieHeader.match(/csrf_token=([^;]+)/)
+  return match ? match[1] : null
+}
+
+async function apiRequest(
+  base: string,
   path: string,
   method: string,
-  body?: unknown,
-  cookies?: string
-) {
-  const url = `${controllerUrl.replace(/\/$/, '')}${path}`
+  cookies: string,
+  csrfToken: string | null,
+  body?: unknown
+): Promise<{ status: number; data: unknown }> {
+  const url = `${base.replace(/\/$/, '')}${path}`
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
+    'Cookie': cookies,
   }
-  if (cookies) headers['Cookie'] = cookies
+  if (csrfToken) headers['X-Csrf-Token'] = csrfToken
 
-  const res = await httpsRequest(url, {
+  const res = await rawRequest(url, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
@@ -60,8 +75,48 @@ async function unifiRequest(
 
   let parsed: unknown
   try { parsed = JSON.parse(res.data) } catch { parsed = res.data }
+  return { status: res.statusCode, data: parsed }
+}
 
-  return { data: parsed, cookies: res.headers['set-cookie'] || '', status: res.statusCode }
+type UnifiStyle = 'os' | 'classic'
+
+async function login(controllerUrl: string, username: string, password: string): Promise<{
+  cookies: string
+  csrfToken: string | null
+  style: UnifiStyle
+}> {
+  const base = controllerUrl.replace(/\/$/, '')
+
+  // Try UniFi OS style first (Dream Machine, Cloud Key Gen2+, UDM-Pro, etc.)
+  try {
+    const res = await rawRequest(`${base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    })
+    if (res.statusCode === 200) {
+      const cookies = parseCookies(res.headers)
+      const csrfRaw = res.headers['x-csrf-token']
+      const csrfToken = (Array.isArray(csrfRaw) ? csrfRaw[0] : csrfRaw) ||
+        getCsrfFromCookies(cookies) || null
+      return { cookies, csrfToken, style: 'os' }
+    }
+  } catch (_) {}
+
+  // Fall back to classic UniFi Controller style (v6 and below)
+  const res = await rawRequest(`${base}/api/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+
+  if (res.statusCode !== 200) {
+    let detail: unknown
+    try { detail = JSON.parse(res.data) } catch { detail = res.data }
+    throw new Error(`Authentication failed (HTTP ${res.statusCode}): ${JSON.stringify(detail)}`)
+  }
+
+  return { cookies: parseCookies(res.headers), csrfToken: null, style: 'classic' }
 }
 
 export async function POST(request: NextRequest) {
@@ -73,42 +128,48 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const loginRes = await unifiRequest(controllerUrl, '/api/login', 'POST', { username, password })
+    const { cookies, csrfToken, style } = await login(controllerUrl, username, password)
 
-    if (loginRes.status !== 200) {
-      return NextResponse.json({ error: 'Authentication failed', detail: loginRes.data }, { status: 401 })
-    }
+    // API prefix differs between UniFi OS and classic
+    const apiBase = style === 'os'
+      ? `${controllerUrl.replace(/\/$/, '')}/proxy/network`
+      : controllerUrl.replace(/\/$/, '')
 
-    const sessionCookies = loginRes.cookies
+    const get = (path: string) => apiRequest(apiBase, path, 'GET', cookies, csrfToken)
 
     let result: unknown = null
 
     switch (action) {
       case 'health':
-        result = await unifiRequest(controllerUrl, `/api/s/${site}/stat/health`, 'GET', undefined, sessionCookies)
+        result = await get(`/api/s/${site}/stat/health`)
         break
       case 'devices':
-        result = await unifiRequest(controllerUrl, `/api/s/${site}/stat/device`, 'GET', undefined, sessionCookies)
+        result = await get(`/api/s/${site}/stat/device`)
         break
       case 'clients':
-        result = await unifiRequest(controllerUrl, `/api/s/${site}/stat/sta`, 'GET', undefined, sessionCookies)
+        result = await get(`/api/s/${site}/stat/sta`)
         break
       case 'dashboard':
-        result = await unifiRequest(controllerUrl, `/api/s/${site}/stat/dashboard`, 'GET', undefined, sessionCookies)
+        result = await get(`/api/s/${site}/stat/dashboard`)
         break
       case 'alarms':
-        result = await unifiRequest(controllerUrl, `/api/s/${site}/list/alarm`, 'GET', undefined, sessionCookies)
+        result = await get(`/api/s/${site}/list/alarm`)
         break
       case 'wlan':
-        result = await unifiRequest(controllerUrl, `/api/s/${site}/list/wlanconf`, 'GET', undefined, sessionCookies)
+        result = await get(`/api/s/${site}/list/wlanconf`)
         break
       default:
         return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 })
     }
 
-    return NextResponse.json({ ok: true, data: (result as { data: unknown }).data })
+    const r = result as { status: number; data: unknown }
+    if (r.status === 401) {
+      return NextResponse.json({ error: 'Session expired or insufficient permissions' }, { status: 401 })
+    }
+
+    return NextResponse.json({ ok: true, style, data: (r.data as { data?: unknown })?.data ?? r.data })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Request failed'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return NextResponse.json({ error: message }, { status: 401 })
   }
 }
