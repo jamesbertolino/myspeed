@@ -175,6 +175,13 @@ export default function ServerSelector({ selected, onChange, disabled }: Props) 
 
   const isStnetSelected = selected?.id.startsWith('stnet-')
 
+  const isCalibrating = !selected && (
+    servers.some(s => s.pinging) ||
+    stnetServers.some(s => s.pinging) ||
+    loading ||
+    stnetLoading
+  )
+
   return (
     <div className="card p-4 mb-4">
       <button
@@ -185,9 +192,9 @@ export default function ServerSelector({ selected, onChange, disabled }: Props) 
         <Server className="w-4 h-4 text-cyan-400 shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-0.5">Servidor de Teste</div>
-          {loading && !isStnetSelected ? (
+          {isCalibrating ? (
             <div className="flex items-center gap-2 text-sm text-gray-400">
-              <Loader2 className="w-3 h-3 animate-spin" /> Detectando servidores...
+              <Loader2 className="w-3 h-3 animate-spin" /> Calibrando servidor mais próximo...
             </div>
           ) : selected ? (
             <div className="flex items-center gap-2">
