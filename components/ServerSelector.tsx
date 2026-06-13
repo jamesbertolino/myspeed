@@ -48,7 +48,7 @@ function stnetToTestServer(s: StnetServer): TestServer {
     provider: 'Speedtest.net',
     downloadUrl: `/api/speedtest/download?remote=${encodeURIComponent(downloadRemote)}`,
     uploadUrl: '/api/speedtest/upload',
-    pingUrl: uploadUrl.replace(/\/upload\.php$/i, '/latency.txt'),
+    pingUrl: uploadUrl.replace(/^http:\/\//, 'https://').replace(/\/upload\.php$/i, '/latency.txt'),
     cors: false,
   }
 }
@@ -136,8 +136,11 @@ export default function ServerSelector({ selected, onChange, disabled }: Props) 
         setStnetServers(list.map(s => ({ ...s, pinging: true })))
         setStnetFetched(true)
         list.forEach((s, i) => {
-          const base = s.url.replace(/\/upload\.php$/i, '')
-          // 6 samples: first 2 warm up DNS+TCP, take min of remaining 4
+          const httpBase = s.url.replace(/\/upload\.php$/i, '')
+          const httpsBase = httpBase.replace(/^http:\/\//, 'https://')
+          const isSecurePage = typeof window !== 'undefined' && window.location.protocol === 'https:'
+          // On HTTPS pages, http:// fetches are blocked (mixed content) — use https:// instead
+          const base = isSecurePage ? httpsBase : httpBase
           const SAMPLES = 6
           const WARMUP = 2
 

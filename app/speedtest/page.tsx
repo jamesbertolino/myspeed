@@ -68,7 +68,11 @@ export default function SpeedTestPage() {
       if (cancelledRef.current) throw new Error('cancelled')
       const t0 = performance.now()
       const pingIsExternal = srv.pingUrl.startsWith('http')
-      const pingUrl = pingIsExternal ? `${srv.pingUrl}?_=${Date.now()}` : `${srv.pingUrl}&_=${Date.now()}`
+      let pingUrl = pingIsExternal ? `${srv.pingUrl}?_=${Date.now()}` : `${srv.pingUrl}&_=${Date.now()}`
+      // Upgrade to HTTPS on secure pages to avoid mixed-content blocking
+      if (pingIsExternal && window.location.protocol === 'https:') {
+        pingUrl = pingUrl.replace(/^http:\/\//, 'https://')
+      }
       await fetch(pingUrl, { cache: 'no-store', ...(pingIsExternal ? { mode: 'no-cors' } : {}) })
       samples.push(performance.now() - t0)
       setCurrentPing(samples[samples.length - 1])
