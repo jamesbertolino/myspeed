@@ -28,6 +28,7 @@ interface StnetServer {
   lon: string
   distance: number
   url: string
+  ip?: string
 }
 
 type Tab = 'builtin' | 'speedtest'
