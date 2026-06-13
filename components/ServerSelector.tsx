@@ -119,28 +119,31 @@ export default function ServerSelector({ selected, onChange, disabled }: Props) 
         setStnetServers(list.map(s => ({ ...s, pinging: true })))
         setStnetFetched(true)
         list.forEach((s, i) => {
-          // Ping directly from browser (not via server proxy) so latency reflects
-          // client→server distance, not Vercel→server distance
+          // Ping directly from browser using multiple samples, take the minimum.
+          // First request warms up DNS/TCP; subsequent ones reflect pure network RTT.
           const base = s.url.replace(/\/upload\.php$/i, '')
-          const pingTarget = `${base}/latency.txt?_=${Date.now()}`
-          const t0 = performance.now()
-          fetch(pingTarget, { mode: 'no-cors', cache: 'no-store' })
-            .then(() => {
-              const ms = Math.round(performance.now() - t0)
-              setStnetServers(prev => prev.map((p, j) => j === i ? { ...p, ping: ms, pinging: false } : p))
-            })
-            .catch(() => {
-              // fallback: try the server proxy
-              const t1 = performance.now()
-              fetch(`/api/speedtest/ping?target=${encodeURIComponent(s.host.split(':')[0])}&_=${Date.now()}`, { cache: 'no-store' })
-                .then(() => {
-                  const ms = Math.round(performance.now() - t1)
-                  setStnetServers(prev => prev.map((p, j) => j === i ? { ...p, ping: ms, pinging: false } : p))
-                })
-                .catch(() => {
-                  setStnetServers(prev => prev.map((p, j) => j === i ? { ...p, ping: 9999, pinging: false } : p))
-                })
-            })
+          const SAMPLES = 4
+
+          async function measurePing(): Promise<number> {
+            const times: number[] = []
+            for (let k = 0; k < SAMPLES; k++) {
+              const t0 = performance.now()
+              try {
+                await fetch(`${base}/latency.txt?_=${Date.now()}`, { mode: 'no-cors', cache: 'no-store' })
+                times.push(performance.now() - t0)
+              } catch {
+                // ignore failed sample
+              }
+            }
+            if (times.length === 0) return 9999
+            // Drop first sample (DNS overhead), take min of the rest
+            const samples = times.length > 1 ? times.slice(1) : times
+            return Math.round(Math.min(...samples))
+          }
+
+          measurePing().then(ms => {
+            setStnetServers(prev => prev.map((p, j) => j === i ? { ...p, ping: ms, pinging: false } : p))
+          })
         })
       })
       .catch(e => setStnetError(String(e)))
