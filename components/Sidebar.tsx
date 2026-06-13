@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart3, Gauge, Activity, Wifi, Server, Zap, Radio, Settings, Menu, X } from 'lucide-react'
+import { BarChart3, Gauge, Activity, Wifi, Server, Zap, Radio, Settings, Menu, X, Monitor } from 'lucide-react'
 import clsx from 'clsx'
 
 const nav = [
@@ -11,6 +11,7 @@ const nav = [
   { href: '/speedtest', icon: Gauge, label: 'Teste de Velocidade' },
   { href: '/network', icon: Activity, label: 'Análise de Rede' },
   { href: '/wifi', icon: Wifi, label: 'Analisador WiFi' },
+  { href: '/devices', icon: Monitor, label: 'Dispositivos' },
   { href: '/controllers', icon: Server, label: 'Controladores' },
 ]
 

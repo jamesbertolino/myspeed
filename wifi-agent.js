@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 'use strict'
 /**
- * MySpeed WiFi Agent — rode localmente para habilitar scan real de WiFi.
+ * MySpeed WiFi Agent — rode localmente para habilitar scan real de WiFi e
+ * escaneamento de dispositivos na rede local.
  *
  * Uso:
  *   node wifi-agent.js          # porta padrão 7474
@@ -11,11 +12,12 @@
  */
 
 const http = require('http')
+const net = require('net')
 const { execSync } = require('child_process')
 
 const PORT = parseInt(process.argv[2] || '7474', 10)
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers (WiFi) ────────────────────────────────────────────────────────────
 
 function signalPctToDbm(pct) {
   return Math.round((pct / 2) - 100)
@@ -49,7 +51,7 @@ function phyToWidth(phy) {
   return 20
 }
 
-// ── Platform scanners ─────────────────────────────────────────────────────────
+// ── Platform WiFi scanners ────────────────────────────────────────────────────
 
 const WINRT_SCAN_PS1 = String.raw`
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
@@ -251,6 +253,237 @@ function scan() {
   return scanLinux()
 }
 
+// ── Device scanner ────────────────────────────────────────────────────────────
+
+const SCAN_PORTS = [
+  { port: 21,    service: 'FTP',           risk: 'high' },
+  { port: 22,    service: 'SSH',           risk: 'low' },
+  { port: 23,    service: 'Telnet',        risk: 'critical' },
+  { port: 25,    service: 'SMTP',          risk: 'medium' },
+  { port: 53,    service: 'DNS',           risk: 'low' },
+  { port: 80,    service: 'HTTP',          risk: 'low' },
+  { port: 110,   service: 'POP3',          risk: 'medium' },
+  { port: 135,   service: 'RPC',           risk: 'high' },
+  { port: 139,   service: 'NetBIOS',       risk: 'high' },
+  { port: 143,   service: 'IMAP',          risk: 'medium' },
+  { port: 443,   service: 'HTTPS',         risk: 'low' },
+  { port: 445,   service: 'SMB',           risk: 'high' },
+  { port: 1723,  service: 'PPTP VPN',      risk: 'high' },
+  { port: 2222,  service: 'SSH-Alt',       risk: 'low' },
+  { port: 3306,  service: 'MySQL',         risk: 'critical' },
+  { port: 3389,  service: 'RDP',           risk: 'high' },
+  { port: 5432,  service: 'PostgreSQL',    risk: 'critical' },
+  { port: 5900,  service: 'VNC',           risk: 'high' },
+  { port: 5985,  service: 'WinRM',         risk: 'high' },
+  { port: 6379,  service: 'Redis',         risk: 'critical' },
+  { port: 8080,  service: 'HTTP-Alt',      risk: 'medium' },
+  { port: 8443,  service: 'HTTPS-Alt',     risk: 'low' },
+  { port: 9200,  service: 'Elasticsearch', risk: 'critical' },
+  { port: 27017, service: 'MongoDB',       risk: 'critical' },
+  { port: 161,   service: 'SNMP',          risk: 'high' },
+]
+
+const OUI = {
+  '00:50:56': 'VMware', '00:0c:29': 'VMware', '00:05:69': 'VMware',
+  'b8:27:eb': 'Raspberry Pi', 'dc:a6:32': 'Raspberry Pi', 'e4:5f:01': 'Raspberry Pi', '28:cd:c1': 'Raspberry Pi',
+  '00:1a:11': 'Google', 'f4:f5:d8': 'Google', 'a4:77:33': 'Google',
+  '00:03:93': 'Apple', '00:1b:63': 'Apple', '00:1c:b3': 'Apple', '00:1d:4f': 'Apple',
+  'c8:69:cd': 'Apple', 'd4:61:9d': 'Apple', 'f0:18:98': 'Apple', '00:26:bb': 'Apple',
+  'a4:5e:60': 'Apple', '40:d3:2d': 'Apple', 'ac:bc:32': 'Apple', 'a8:51:ab': 'Apple',
+  '00:17:c4': 'D-Link', '00:1b:11': 'D-Link', '00:22:b0': 'D-Link', '00:24:01': 'D-Link',
+  '00:14:d1': 'TP-Link', 'e8:de:27': 'TP-Link', '50:c7:bf': 'TP-Link', 'ac:15:a2': 'TP-Link',
+  'c8:3a:35': 'TP-Link', '54:a7:03': 'TP-Link',
+  '20:0c:c8': 'Netgear', '00:14:6c': 'Netgear', 'c4:3d:c7': 'Netgear', '9c:d3:6d': 'Netgear',
+  '1c:1b:0d': 'Netgear', 'a0:21:b7': 'Netgear',
+  '00:1a:70': 'Cisco', '00:0d:ec': 'Cisco', '00:0f:23': 'Cisco', '00:60:70': 'Cisco',
+  '00:90:ab': 'Cisco', 'fc:fb:fb': 'Cisco', 'b0:aa:77': 'Cisco', '70:ca:9b': 'Cisco',
+  '00:23:ae': 'Ubiquiti', '04:18:d6': 'Ubiquiti', '24:a4:3c': 'Ubiquiti', '44:d9:e7': 'Ubiquiti',
+  '68:72:51': 'Ubiquiti', '78:8a:20': 'Ubiquiti', '80:2a:a8': 'Ubiquiti', 'b4:fb:e4': 'Ubiquiti',
+  'dc:9f:db': 'Ubiquiti', 'f0:9f:c2': 'Ubiquiti', '18:e8:29': 'Ubiquiti',
+  '00:23:24': 'Huawei', '00:e0:fc': 'Huawei', '00:18:82': 'Huawei', '48:00:31': 'Huawei',
+  '54:89:98': 'Huawei', '4c:1f:cc': 'Huawei', '70:72:cf': 'Huawei',
+  '00:1d:0f': 'Samsung', '50:01:bb': 'Samsung', '60:a1:0a': 'Samsung', '90:18:7c': 'Samsung',
+  'b4:3a:28': 'Samsung', 'f4:7b:5e': 'Samsung', '8c:71:f8': 'Samsung',
+  '28:6c:07': 'Xiaomi', '34:ce:00': 'Xiaomi', '64:09:80': 'Xiaomi',
+  '78:02:f8': 'Xiaomi', 'ac:f7:f3': 'Xiaomi', 'f8:a4:5f': 'Xiaomi', '58:44:98': 'Xiaomi',
+  '44:65:0d': 'Amazon', '68:37:e9': 'Amazon', '74:c2:46': 'Amazon',
+  'a0:02:dc': 'Amazon', 'fc:a6:67': 'Amazon', '84:d6:d0': 'Amazon', '34:d2:70': 'Amazon',
+  '00:1e:c9': 'Dell', '00:21:9b': 'Dell', 'f8:db:88': 'Dell',
+  '3c:d9:2b': 'HP', '00:1e:0b': 'HP', 'b4:99:ba': 'HP',
+  '00:1a:4b': 'Intel', '8c:8d:28': 'Intel', 'ac:fd:ce': 'Intel',
+  '00:1e:8c': 'ASUSTeK', '10:bf:48': 'ASUSTeK', '2c:56:dc': 'ASUSTeK',
+  '00:90:a9': 'Western Digital', '00:26:b9': 'Western Digital',
+  '00:30:48': 'Supermicro', '0c:c4:7a': 'Supermicro',
+  '00:04:96': 'Extreme Networks',
+  '00:1e:2a': 'Netgear',
+}
+
+function lookupVendor(mac) {
+  if (!mac) return null
+  const prefix = mac.toLowerCase().slice(0, 8)
+  return OUI[prefix] || null
+}
+
+function tcpProbe(host, port, timeout) {
+  timeout = timeout || 600
+  return new Promise(resolve => {
+    const sock = new net.Socket()
+    let done = false
+    const finish = (open) => {
+      if (done) return
+      done = true
+      try { sock.destroy() } catch (_) {}
+      resolve(open)
+    }
+    sock.setTimeout(timeout)
+    sock.on('connect', () => finish(true))
+    sock.on('error', () => finish(false))
+    sock.on('timeout', () => finish(false))
+    try { sock.connect(port, host) } catch (_) { finish(false) }
+  })
+}
+
+async function parallelBatch(items, fn, concurrency) {
+  const results = []
+  for (let i = 0; i < items.length; i += concurrency) {
+    const batch = items.slice(i, i + concurrency)
+    const batchRes = await Promise.all(batch.map(fn))
+    results.push(...batchRes)
+  }
+  return results
+}
+
+function deviceRiskLevel(openPorts) {
+  if (!openPorts.length) return 'none'
+  if (openPorts.some(p => p.risk === 'critical')) return 'critical'
+  if (openPorts.some(p => p.risk === 'high')) return 'high'
+  if (openPorts.some(p => p.risk === 'medium')) return 'medium'
+  return 'low'
+}
+
+function getArpHosts() {
+  const ips = new Map()
+  try {
+    let out
+    if (process.platform === 'win32') {
+      out = execSync('arp -a', { encoding: 'utf8', timeout: 5000 })
+      for (const line of out.split('\n')) {
+        const m = line.match(/\s+([\d.]+)\s+([\da-f]{2}[-][\da-f]{2}[-][\da-f]{2}[-][\da-f]{2}[-][\da-f]{2}[-][\da-f]{2})\s+/i)
+        if (m) ips.set(m[1], m[2].replace(/-/g, ':').toLowerCase())
+      }
+    } else if (process.platform === 'darwin') {
+      out = execSync('arp -a 2>/dev/null', { encoding: 'utf8', timeout: 5000 })
+      for (const line of out.split('\n')) {
+        const m = line.match(/\(([^)]+)\)\s+at\s+([\da-f:]{17})/i)
+        if (m && m[2] !== 'ff:ff:ff:ff:ff:ff') ips.set(m[1], m[2].toLowerCase())
+      }
+    } else {
+      try {
+        out = execSync('ip neigh show 2>/dev/null', { encoding: 'utf8', timeout: 5000 })
+        for (const line of out.split('\n')) {
+          const m = line.match(/^([\d.]+)\s+\S+\s+\S+\s+([\da-f:]{17})/i)
+          if (m) ips.set(m[1], m[2].toLowerCase())
+        }
+      } catch (_) {
+        try {
+          out = execSync('arp -n 2>/dev/null', { encoding: 'utf8', timeout: 5000 })
+          for (const line of out.split('\n').slice(1)) {
+            const p = line.trim().split(/\s+/)
+            if (p.length >= 3 && p[2] && p[2].includes(':') && p[2] !== '(incomplete)') {
+              ips.set(p[0], p[2].toLowerCase())
+            }
+          }
+        } catch (_2) {}
+      }
+    }
+  } catch (_) {}
+  return ips
+}
+
+function getLocalSubnet() {
+  const os = require('os')
+  const ifaces = os.networkInterfaces()
+  for (const name of Object.keys(ifaces)) {
+    for (const iface of (ifaces[name] || [])) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        const parts = iface.address.split('.').map(Number)
+        const [a, b] = parts
+        if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) {
+          return { subnet: `${parts[0]}.${parts[1]}.${parts[2]}`, localIp: iface.address }
+        }
+      }
+    }
+  }
+  return null
+}
+
+async function discoverSubnet(subnet, arpHosts, onFound) {
+  const PROBE_PORTS = [80, 443, 22, 8080, 8443, 21, 23, 3389]
+  const allIps = []
+  for (let i = 1; i <= 254; i++) allIps.push(`${subnet}.${i}`)
+
+  await parallelBatch(allIps, async (ip) => {
+    if (arpHosts.has(ip)) return
+    for (const port of PROBE_PORTS) {
+      if (await tcpProbe(ip, port, 500)) {
+        onFound(ip)
+        return
+      }
+    }
+  }, 25)
+}
+
+async function scanDevicePorts(host) {
+  const open = []
+  await parallelBatch(SCAN_PORTS, async (portDef) => {
+    if (await tcpProbe(host, portDef.port, 700)) {
+      open.push({ port: portDef.port, service: portDef.service, risk: portDef.risk })
+    }
+  }, 10)
+  open.sort((a, b) => a.port - b.port)
+  return open
+}
+
+async function handleDevices(req, res) {
+  res.writeHead(200, {
+    'Content-Type': 'application/x-ndjson',
+    'Transfer-Encoding': 'chunked',
+    'Cache-Control': 'no-cache, no-store',
+  })
+
+  const ndjson = (obj) => {
+    try { res.write(JSON.stringify(obj) + '\n') } catch (_) {}
+  }
+  const t0 = Date.now()
+
+  ndjson({ type: 'start' })
+
+  const arpHosts = getArpHosts()
+  const subnetInfo = getLocalSubnet()
+
+  if (subnetInfo) {
+    ndjson({ type: 'progress', message: `Varrendo ${subnetInfo.subnet}.0/24 (isso pode levar alguns segundos)...` })
+    await discoverSubnet(subnetInfo.subnet, arpHosts, (ip) => {
+      if (!arpHosts.has(ip)) arpHosts.set(ip, null)
+    })
+  }
+
+  const hosts = [...arpHosts.entries()].filter(([ip]) => /^[\d.]+$/.test(ip))
+  ndjson({ type: 'hosts', count: hosts.length })
+
+  let count = 0
+  await parallelBatch(hosts, async ([ip, mac]) => {
+    const openPorts = await scanDevicePorts(ip)
+    const vendor = lookupVendor(mac)
+    const riskLevel = deviceRiskLevel(openPorts)
+    count++
+    ndjson({ type: 'device', device: { ip, mac, vendor, hostname: null, openPorts, riskLevel } })
+  }, 5)
+
+  ndjson({ type: 'done', count, elapsed: Date.now() - t0 })
+  try { res.end() } catch (_) {}
+}
+
 // ── HTTP Server ───────────────────────────────────────────────────────────────
 
 function cors(req, res) {
@@ -262,7 +495,8 @@ function cors(req, res) {
   res.setHeader('Access-Control-Allow-Private-Network', 'true')
 }
 
-function json(res, data, status = 200) {
+function json(res, data, status) {
+  status = status || 200
   res.writeHead(status, { 'Content-Type': 'application/json' })
   res.end(JSON.stringify(data))
 }
@@ -281,7 +515,7 @@ const server = http.createServer((req, res) => {
 
   // Verificação de disponibilidade
   if (url === '/ping') {
-    json(res, { ready: true, platform: process.platform, version: '1.0' })
+    json(res, { ready: true, platform: process.platform, version: '1.1' })
     return
   }
 
@@ -293,6 +527,12 @@ const server = http.createServer((req, res) => {
     } catch (e) {
       json(res, { error: e.message, networks: [] }, 500)
     }
+    return
+  }
+
+  // Scan de dispositivos (NDJSON streaming)
+  if (url === '/devices') {
+    handleDevices(req, res)
     return
   }
 
@@ -327,6 +567,6 @@ server.listen(PORT, '127.0.0.1', () => {
     console.log(`  e as permissões de localização concedidas\n`)
   } else {
     console.log(`\n  Abra o MySpeed no navegador e vá para`)
-    console.log(`  a aba WiFi — o agente será detectado\n`)
+    console.log(`  a aba WiFi ou Dispositivos — o agente será detectado\n`)
   }
 })
