@@ -95,15 +95,31 @@ export default function ServerSelector({ selected, onChange, disabled }: Props) 
         })
       })
       .catch(() => setLoading(false))
-  }, [])
 
-  // Auto-select lowest-ping built-in server once
+    // Also load stnet servers in background for auto-select
+    loadStnet()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-select the overall lowest-ping server (built-in or stnet) once both lists finish
   useEffect(() => {
-    const done = servers.every(s => !s.pinging)
-    if (!done || servers.length === 0 || selected) return
-    const best = [...servers].filter(s => s.ping !== 9999).sort((a, b) => (a.ping ?? 9999) - (b.ping ?? 9999))[0]
-    if (best) onChange(best)
-  }, [servers, selected, onChange])
+    if (selected) return
+    const builtinDone = servers.length > 0 && servers.every(s => !s.pinging)
+    const stnetDone = stnetFetched && stnetServers.every(s => !s.pinging)
+    if (!builtinDone && !stnetDone) return
+
+    const builtinCandidates: { ping: number; server: TestServer }[] = servers
+      .filter(s => s.ping !== undefined && s.ping < 9999)
+      .map(s => ({ ping: s.ping!, server: s }))
+
+    const stnetCandidates: { ping: number; server: TestServer }[] = stnetServers
+      .filter(s => s.ping !== undefined && s.ping < 9999)
+      .map(s => ({ ping: s.ping!, server: stnetToTestServer(s) }))
+
+    const all = [...builtinCandidates, ...stnetCandidates]
+    if (all.length === 0) return
+    const best = all.sort((a, b) => a.ping - b.ping)[0]
+    onChange(best.server)
+  }, [servers, stnetServers, stnetFetched, selected, onChange])
 
   // Load Speedtest.net servers when tab is opened
   function loadStnet() {
