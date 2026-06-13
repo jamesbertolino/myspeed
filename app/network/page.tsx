@@ -149,11 +149,11 @@ export default function NetworkPage() {
             key={t.id}
             onClick={() => setTab(t.id)}
             className={clsx(
-              'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all',
+              'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all whitespace-nowrap',
               tab === t.id ? 'bg-[#1a2744] text-white' : 'text-gray-500 hover:text-gray-300'
             )}
           >
-            <t.icon className="w-4 h-4" />
+            <t.icon className="w-4 h-4 shrink-0" />
             {t.label}
           </button>
         ))}
