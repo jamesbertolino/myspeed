@@ -111,38 +111,28 @@ export default function ServerSelector({ selected, onChange, disabled }: Props) 
     setStnetLoading(true)
     setStnetError(null)
 
-    // Try to get user coords for nearest servers
-    const fetchServers = (lat?: number, lon?: number) => {
-      const params = lat != null ? `?lat=${lat}&lon=${lon}&limit=30` : '?limit=30'
-      fetch(`/api/speedtest/stnet-servers${params}`)
-        .then(r => r.json())
-        .then(({ servers: list, error }: { servers: StnetServer[]; error?: string }) => {
-          if (error && !list?.length) { setStnetError(error); return }
-          setStnetServers(list.map(s => ({ ...s, pinging: true })))
-          setStnetFetched(true)
-          // Ping each
-          list.forEach((s, i) => {
-            const t0 = performance.now()
-            const pingUrl = `/api/speedtest/ping?target=${encodeURIComponent(s.host.split(':')[0])}&_=${Date.now()}`
-            fetch(pingUrl, { cache: 'no-store' })
-              .then(() => {
-                const ms = Math.round(performance.now() - t0)
-                setStnetServers(prev => prev.map((p, j) => j === i ? { ...p, ping: ms, pinging: false } : p))
-              })
-              .catch(() => {
-                setStnetServers(prev => prev.map((p, j) => j === i ? { ...p, ping: 9999, pinging: false } : p))
-              })
-          })
-        })
-        .catch(e => setStnetError(String(e)))
-        .finally(() => setStnetLoading(false))
-    }
-
-    // Use IP geolocation (ISP location) instead of browser GPS
-    fetch('https://ipwho.is/')
+    // Server resolves client IP geolocation automatically via x-forwarded-for
+    fetch('/api/speedtest/stnet-servers?limit=30')
       .then(r => r.json())
-      .then(d => fetchServers(d.latitude, d.longitude))
-      .catch(() => fetchServers())
+      .then(({ servers: list, error }: { servers: StnetServer[]; error?: string }) => {
+        if (error && !list?.length) { setStnetError(error); return }
+        setStnetServers(list.map(s => ({ ...s, pinging: true })))
+        setStnetFetched(true)
+        list.forEach((s, i) => {
+          const t0 = performance.now()
+          const pingUrl = `/api/speedtest/ping?target=${encodeURIComponent(s.host.split(':')[0])}&_=${Date.now()}`
+          fetch(pingUrl, { cache: 'no-store' })
+            .then(() => {
+              const ms = Math.round(performance.now() - t0)
+              setStnetServers(prev => prev.map((p, j) => j === i ? { ...p, ping: ms, pinging: false } : p))
+            })
+            .catch(() => {
+              setStnetServers(prev => prev.map((p, j) => j === i ? { ...p, ping: 9999, pinging: false } : p))
+            })
+        })
+      })
+      .catch(e => setStnetError(String(e)))
+      .finally(() => setStnetLoading(false))
   }
 
   const currentServer: ServerWithPing | null = selected

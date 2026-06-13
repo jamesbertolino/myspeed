@@ -15,17 +15,46 @@ export interface StnetServer {
   url: string
 }
 
+async function getClientLatLon(req: NextRequest): Promise<{ lat: number; lon: number } | null> {
+  const forwarded = req.headers.get('x-forwarded-for')
+  const realIp = req.headers.get('x-real-ip')
+  const ip = forwarded?.split(',')[0].trim() || realIp || ''
+
+  if (!ip || ip === '127.0.0.1' || ip === '::1') return null
+
+  try {
+    const res = await fetch(`https://ipinfo.io/${ip}/json`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!res.ok) return null
+    const d = await res.json()
+    if (d.bogon || !d.loc) return null
+    const [lat, lon] = d.loc.split(',').map(Number)
+    return { lat, lon }
+  } catch {
+    return null
+  }
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
-  const lat = searchParams.get('lat') ?? ''
-  const lon = searchParams.get('lon') ?? ''
   const limit = searchParams.get('limit') ?? '30'
+
+  // Prefer explicit coords (passed by client), otherwise geolocate client IP server-side
+  let lat = searchParams.get('lat') ? Number(searchParams.get('lat')) : null
+  let lon = searchParams.get('lon') ? Number(searchParams.get('lon')) : null
+
+  if (lat === null || lon === null) {
+    const coords = await getClientLatLon(req)
+    if (coords) { lat = coords.lat; lon = coords.lon }
+  }
 
   const params = new URLSearchParams({
     engine: 'js',
     https_functional: 'true',
     limit,
-    ...(lat && lon ? { lat, lon } : {}),
+    ...(lat != null && lon != null ? { lat: String(lat), lon: String(lon) } : {}),
   })
 
   try {
@@ -44,10 +73,9 @@ export async function GET(req: NextRequest) {
     if (!res.ok) throw new Error(`Speedtest.net responded ${res.status}`)
     const data = await res.json()
 
-    // Response is { value: [...], Count: N } or just an array
     const servers: StnetServer[] = Array.isArray(data) ? data : (data.value ?? [])
 
-    return NextResponse.json({ servers })
+    return NextResponse.json({ servers, resolvedLat: lat, resolvedLon: lon })
   } catch (e) {
     return NextResponse.json({ error: String(e), servers: [] }, { status: 502 })
   }
