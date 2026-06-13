@@ -54,7 +54,8 @@ function stnetToTestServer(s: StnetServer): TestServer {
 
 function countryFlag(cc: string): string {
   if (!cc || cc.length !== 2) return '🌐'
-  return String.fromCodePoint(...[...cc.toUpperCase()].map(c => 0x1F1E6 + c.charCodeAt(0) - 65))
+  const upper = cc.toUpperCase()
+  return String.fromCodePoint(0x1F1E6 + upper.charCodeAt(0) - 65, 0x1F1E6 + upper.charCodeAt(1) - 65)
 }
 
 export default function ServerSelector({ selected, onChange, disabled }: Props) {
