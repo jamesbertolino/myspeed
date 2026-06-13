@@ -119,24 +119,38 @@ export default function ServerSelector({ selected, onChange, disabled }: Props) 
         setStnetServers(list.map(s => ({ ...s, pinging: true })))
         setStnetFetched(true)
         list.forEach((s, i) => {
-          // Ping directly from browser using multiple samples, take the minimum.
-          // First request warms up DNS/TCP; subsequent ones reflect pure network RTT.
-          const base = s.url.replace(/\/upload\.php$/i, '')
+          const host = s.host  // e.g. speedtest.vivo.com.br:8080
           const SAMPLES = 4
+
+          // WebSocket ping: measures TCP+WS handshake RTT, much closer to ICMP than HTTP fetch.
+          // Speedtest.net servers support WS on the same host:port.
+          function wsPing(): Promise<number> {
+            return new Promise(resolve => {
+              const t0 = performance.now()
+              let done = false
+              const finish = (ms: number) => { if (!done) { done = true; resolve(ms) } }
+              const timer = setTimeout(() => finish(9999), 3000)
+              try {
+                const ws = new WebSocket(`ws://${host}/`)
+                const onDone = () => {
+                  clearTimeout(timer)
+                  finish(Math.round(performance.now() - t0))
+                  try { ws.close() } catch (_) {}
+                }
+                ws.onopen = onDone
+                ws.onerror = onDone  // TCP connected but WS rejected = still RTT
+              } catch { clearTimeout(timer); finish(9999) }
+            })
+          }
 
           async function measurePing(): Promise<number> {
             const times: number[] = []
             for (let k = 0; k < SAMPLES; k++) {
-              const t0 = performance.now()
-              try {
-                await fetch(`${base}/latency.txt?_=${Date.now()}`, { mode: 'no-cors', cache: 'no-store' })
-                times.push(performance.now() - t0)
-              } catch {
-                // ignore failed sample
-              }
+              const ms = await wsPing()
+              if (ms < 9999) times.push(ms)
             }
             if (times.length === 0) return 9999
-            // Drop first sample (DNS overhead), take min of the rest
+            // Drop first sample (connection setup), take min of the rest
             const samples = times.length > 1 ? times.slice(1) : times
             return Math.round(Math.min(...samples))
           }
