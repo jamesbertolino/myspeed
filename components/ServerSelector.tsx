@@ -119,40 +119,22 @@ export default function ServerSelector({ selected, onChange, disabled }: Props) 
         setStnetServers(list.map(s => ({ ...s, pinging: true })))
         setStnetFetched(true)
         list.forEach((s, i) => {
-          const host = s.host  // e.g. speedtest.vivo.com.br:8080
-          const SAMPLES = 4
-
-          // WebSocket ping: measures TCP+WS handshake RTT, much closer to ICMP than HTTP fetch.
-          // Speedtest.net servers support WS on the same host:port.
-          function wsPing(): Promise<number> {
-            return new Promise(resolve => {
-              const t0 = performance.now()
-              let done = false
-              const finish = (ms: number) => { if (!done) { done = true; resolve(ms) } }
-              const timer = setTimeout(() => finish(9999), 3000)
-              try {
-                const ws = new WebSocket(`ws://${host}/`)
-                const onDone = () => {
-                  clearTimeout(timer)
-                  finish(Math.round(performance.now() - t0))
-                  try { ws.close() } catch (_) {}
-                }
-                ws.onopen = onDone
-                ws.onerror = onDone  // TCP connected but WS rejected = still RTT
-              } catch { clearTimeout(timer); finish(9999) }
-            })
-          }
+          const base = s.url.replace(/\/upload\.php$/i, '')
+          // 6 samples: first 2 warm up DNS+TCP, take min of remaining 4
+          const SAMPLES = 6
+          const WARMUP = 2
 
           async function measurePing(): Promise<number> {
             const times: number[] = []
             for (let k = 0; k < SAMPLES; k++) {
-              const ms = await wsPing()
-              if (ms < 9999) times.push(ms)
+              const t0 = performance.now()
+              try {
+                await fetch(`${base}/latency.txt?_=${Date.now()}`, { mode: 'no-cors', cache: 'no-store' })
+                times.push(performance.now() - t0)
+              } catch { /* ignore */ }
             }
-            if (times.length === 0) return 9999
-            // Drop first sample (connection setup), take min of the rest
-            const samples = times.length > 1 ? times.slice(1) : times
-            return Math.round(Math.min(...samples))
+            if (times.length <= WARMUP) return times.length ? Math.round(Math.min(...times)) : 9999
+            return Math.round(Math.min(...times.slice(WARMUP)))
           }
 
           measurePing().then(ms => {
