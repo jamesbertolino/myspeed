@@ -284,7 +284,10 @@ export default function ServerSelector({ selected, onChange, disabled }: Props) 
                       <span className="text-base w-5 text-center shrink-0">{countryFlag(s.cc)}</span>
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-semibold text-white truncate">{s.sponsor}</div>
-                        <div className="text-xs text-gray-500 truncate">{s.name}, {s.country} · {Math.round(s.distance)} km</div>
+                        <div className="text-xs text-gray-500 truncate">
+                          {s.name}, {s.country} · {Math.round(s.distance)} km
+                          {s.ip && <span className="text-gray-600"> · {s.ip}</span>}
+                        </div>
                       </div>
                       <div className="shrink-0 w-14 text-right">
                         {s.pinging ? (

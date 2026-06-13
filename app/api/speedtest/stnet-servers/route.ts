@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import dns from 'dns/promises'
 
 export const runtime = 'nodejs'
 
@@ -13,6 +14,7 @@ export interface StnetServer {
   lon: string
   distance: number
   url: string
+  ip?: string
 }
 
 async function getClientLatLon(req: NextRequest): Promise<{ lat: number; lon: number } | null> {
@@ -74,6 +76,15 @@ export async function GET(req: NextRequest) {
     const data = await res.json()
 
     const servers: StnetServer[] = Array.isArray(data) ? data : (data.value ?? [])
+
+    // Resolve IPs in parallel (best-effort, ignore failures)
+    await Promise.all(servers.map(async s => {
+      try {
+        const hostname = s.host.split(':')[0]
+        const { address } = await dns.lookup(hostname)
+        s.ip = address
+      } catch { /* leave undefined */ }
+    }))
 
     return NextResponse.json({ servers, resolvedLat: lat, resolvedLon: lon })
   } catch (e) {
