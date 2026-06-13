@@ -142,7 +142,14 @@ export default function ServerSelector({ selected, onChange, disabled }: Props) 
           }
 
           measurePing().then(ms => {
-            setStnetServers(prev => prev.map((p, j) => j === i ? { ...p, ping: ms, pinging: false } : p))
+            setStnetServers(prev => {
+              const updated = prev.map((p, j) => j === i ? { ...p, ping: ms, pinging: false } : p)
+              return [...updated].sort((a, b) => {
+                if (a.pinging && !b.pinging) return 1
+                if (!a.pinging && b.pinging) return -1
+                return (a.ping ?? 9999) - (b.ping ?? 9999)
+              })
+            })
           })
         })
       })
