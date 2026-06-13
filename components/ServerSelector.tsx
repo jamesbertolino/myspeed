@@ -119,15 +119,27 @@ export default function ServerSelector({ selected, onChange, disabled }: Props) 
         setStnetServers(list.map(s => ({ ...s, pinging: true })))
         setStnetFetched(true)
         list.forEach((s, i) => {
+          // Ping directly from browser (not via server proxy) so latency reflects
+          // client→server distance, not Vercel→server distance
+          const base = s.url.replace(/\/upload\.php$/i, '')
+          const pingTarget = `${base}/latency.txt?_=${Date.now()}`
           const t0 = performance.now()
-          const pingUrl = `/api/speedtest/ping?target=${encodeURIComponent(s.host.split(':')[0])}&_=${Date.now()}`
-          fetch(pingUrl, { cache: 'no-store' })
+          fetch(pingTarget, { mode: 'no-cors', cache: 'no-store' })
             .then(() => {
               const ms = Math.round(performance.now() - t0)
               setStnetServers(prev => prev.map((p, j) => j === i ? { ...p, ping: ms, pinging: false } : p))
             })
             .catch(() => {
-              setStnetServers(prev => prev.map((p, j) => j === i ? { ...p, ping: 9999, pinging: false } : p))
+              // fallback: try the server proxy
+              const t1 = performance.now()
+              fetch(`/api/speedtest/ping?target=${encodeURIComponent(s.host.split(':')[0])}&_=${Date.now()}`, { cache: 'no-store' })
+                .then(() => {
+                  const ms = Math.round(performance.now() - t1)
+                  setStnetServers(prev => prev.map((p, j) => j === i ? { ...p, ping: ms, pinging: false } : p))
+                })
+                .catch(() => {
+                  setStnetServers(prev => prev.map((p, j) => j === i ? { ...p, ping: 9999, pinging: false } : p))
+                })
             })
         })
       })
