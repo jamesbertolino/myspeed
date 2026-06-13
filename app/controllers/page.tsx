@@ -98,6 +98,8 @@ export default function ControllersPage() {
   const [unifiDevices, setUnifiDevices] = useState<UnifiDevice[]>([])
   const [unifiClients, setUnifiClients] = useState<UnifiClient[]>([])
   const [unifiView, setUnifiView] = useState<'devices' | 'clients' | 'wlan'>('devices')
+  const [unifi2fa, setUnifi2fa] = useState<{ mfaCookie: string; authenticators: Array<{ id: string; type: string; name?: string; email?: string }> } | null>(null)
+  const [unifi2faCode, setUnifi2faCode] = useState('')
 
   // MikroTik state
   const [mtUrl, setMtUrl] = useState('')
@@ -121,26 +123,31 @@ export default function ControllersPage() {
     if (saved2) { const p = JSON.parse(saved2); setMtUrl(p.url); setMtUser(p.user) }
   }, [])
 
-  async function unifiCall(action: string) {
+  async function unifiCall(action: string, extra?: Record<string, string>) {
     const res = await fetch('/api/unifi/proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ controllerUrl: unifiUrl, username: unifiUser, password: unifiPass, site: unifiSite, action }),
+      body: JSON.stringify({ controllerUrl: unifiUrl, username: unifiUser, password: unifiPass, site: unifiSite, action, ...extra }),
     })
     return res.json()
   }
 
-  async function connectUnifi() {
+  async function connectUnifi(token2fa?: string, mfaCookie?: string) {
     setUnifiLoading(true)
     setUnifiError('')
     try {
-      const healthData = await unifiCall('health')
+      const healthData = await unifiCall('health', token2fa ? { token2fa, mfaCookie: mfaCookie! } : undefined)
+      if (healthData.requires2fa) {
+        setUnifi2fa({ mfaCookie: healthData.mfaCookie, authenticators: healthData.authenticators })
+        return
+      }
       if (!healthData.ok) throw new Error(healthData.error || 'Falha na conexão')
-      const devData = await unifiCall('devices')
-      const cliData = await unifiCall('clients')
-      setUnifiDevices(devData.data?.data || [])
-      setUnifiClients(cliData.data?.data || [])
+      const [devData, cliData] = await Promise.all([unifiCall('devices'), unifiCall('clients')])
+      setUnifiDevices(devData.data || [])
+      setUnifiClients(cliData.data || [])
       setUnifiConnected(true)
+      setUnifi2fa(null)
+      setUnifi2faCode('')
       sessionStorage.setItem('unifi_creds', JSON.stringify({ url: unifiUrl, user: unifiUser, site: unifiSite }))
     } catch (e: unknown) {
       setUnifiError(e instanceof Error ? e.message : 'Erro de conexão')
@@ -279,7 +286,40 @@ export default function ControllersPage() {
                   </div>
                 )}
 
-                <button onClick={connectUnifi} disabled={unifiLoading || !unifiUrl || !unifiPass}
+                {unifi2fa && (
+                  <div className="space-y-3 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
+                    <p className="text-xs text-yellow-300 font-semibold flex items-center gap-2">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      Autenticação 2FA necessária
+                    </p>
+                    <p className="text-xs text-yellow-400/70">
+                      {unifi2fa.authenticators.map(a =>
+                        a.type === 'email' ? `Código enviado para ${a.email}` :
+                        a.type === 'push'  ? `Notificação enviada para ${a.name || a.email}` :
+                        `Código via ${a.type}`
+                      ).join(' · ')}
+                    </p>
+                    <input
+                      className="dark-input mono tracking-widest text-center text-lg"
+                      placeholder="000000"
+                      maxLength={6}
+                      value={unifi2faCode}
+                      onChange={e => setUnifi2faCode(e.target.value.replace(/\D/g, ''))}
+                      onKeyDown={e => e.key === 'Enter' && unifi2faCode.length === 6 && connectUnifi(unifi2faCode, unifi2fa.mfaCookie)}
+                      autoFocus
+                    />
+                    <button
+                      onClick={() => connectUnifi(unifi2faCode, unifi2fa.mfaCookie)}
+                      disabled={unifiLoading || unifi2faCode.length < 6}
+                      className="btn-cyan w-full py-2 rounded-lg font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      {unifiLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                      {unifiLoading ? 'Verificando...' : 'Verificar código'}
+                    </button>
+                  </div>
+                )}
+
+                <button onClick={() => connectUnifi()} disabled={unifiLoading || !unifiUrl || !unifiPass}
                   className="btn-cyan w-full py-2.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50">
                   {unifiLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
                   {unifiLoading ? 'Conectando...' : 'Conectar'}
