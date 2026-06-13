@@ -138,11 +138,11 @@ export default function ServerSelector({ selected, onChange, disabled }: Props) 
         .finally(() => setStnetLoading(false))
     }
 
-    navigator.geolocation?.getCurrentPosition(
-      pos => fetchServers(pos.coords.latitude, pos.coords.longitude),
-      ()  => fetchServers(),
-      { timeout: 3000 }
-    ) ?? fetchServers()
+    // Use IP geolocation (ISP location) instead of browser GPS
+    fetch('https://ipwho.is/')
+      .then(r => r.json())
+      .then(d => fetchServers(d.latitude, d.longitude))
+      .catch(() => fetchServers())
   }
 
   const currentServer: ServerWithPing | null = selected
