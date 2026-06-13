@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
-import { Wifi, Plus, Trash2, Info, CheckCircle, AlertTriangle, Radio, ScanLine, RefreshCw, Puzzle, Sparkles, ShieldCheck, ShieldAlert, ShieldX, TrendingUp } from 'lucide-react'
+import { Wifi, Plus, Trash2, Info, CheckCircle, AlertTriangle, Radio, ScanLine, RefreshCw, Puzzle, Sparkles, ShieldCheck, ShieldAlert, ShieldX, TrendingUp, Terminal } from 'lucide-react'
 import WiFiChannelMap, { WiFiNetwork } from '@/components/WiFiChannelMap'
 import { NON_OVERLAPPING_24, NON_OVERLAPPING_5 } from '@/lib/utils'
 import clsx from 'clsx'
@@ -47,6 +47,8 @@ function bestChannel(networks: WiFiNetwork[], band: '2.4' | '5'): number {
   return candidates.reduce((best, ch) => scores[ch] > scores[best] ? ch : best, candidates[0])
 }
 
+const AGENT_PORT = 7474
+
 export default function WiFiPage() {
   const [band, setBand] = useState<'2.4' | '5'>('2.4')
   const [networks, setNetworks] = useState<WiFiNetwork[]>([...EXAMPLE_NETWORKS_24, ...EXAMPLE_NETWORKS_5])
@@ -56,17 +58,53 @@ export default function WiFiPage() {
   const [scanError, setScanError] = useState<string | null>(null)
   const [isRealData, setIsRealData] = useState(false)
   const [extensionReady, setExtensionReady] = useState(false)
+  const [agentReady, setAgentReady] = useState(false)
+  const [agentPlatform, setAgentPlatform] = useState<string | null>(null)
   const [aiAnalysis, setAiAnalysis] = useState<AIAnalysis | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
 
-  // Detect if the MySpeed WiFi extension is installed and active
+  // Detect Chrome extension
   useEffect(() => {
     const onReady = () => setExtensionReady(true)
     window.addEventListener('myspeed:extension-ready', onReady)
     return () => window.removeEventListener('myspeed:extension-ready', onReady)
   }, [])
 
-  // Ask the extension (content script bridge) for a WiFi scan
+  // Detect local WiFi agent (http://localhost:7474)
+  useEffect(() => {
+    let cancelled = false
+    const check = async () => {
+      try {
+        const res = await fetch(`http://localhost:${AGENT_PORT}/ping`, {
+          signal: AbortSignal.timeout(1500),
+        })
+        const data = await res.json()
+        if (!cancelled && data.ready) {
+          setAgentReady(true)
+          setAgentPlatform(data.platform ?? null)
+        }
+      } catch {
+        // agent not running — silent
+      }
+    }
+    check()
+    // Re-check every 8 s in case user starts the agent after loading
+    const interval = setInterval(check, 8000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [])
+
+  const scanViaAgent = async (): Promise<WiFiNetwork[] | null> => {
+    try {
+      const res = await fetch(`http://localhost:${AGENT_PORT}/scan`, {
+        signal: AbortSignal.timeout(20000),
+      })
+      const data = await res.json()
+      return data.networks?.length > 0 ? data.networks : null
+    } catch {
+      return null
+    }
+  }
+
   const scanViaExtension = (): Promise<WiFiNetwork[] | null> =>
     new Promise((resolve) => {
       const timeout = setTimeout(() => resolve(null), 4000)
@@ -82,7 +120,20 @@ export default function WiFiPage() {
     setScanning(true)
     setScanError(null)
     try {
-      // 1. Try extension first (works on Vercel too)
+      // 1. Agente local (prioridade máxima — funciona remoto e localmente)
+      if (agentReady) {
+        const nets = await scanViaAgent()
+        if (nets) {
+          setNetworks(nets)
+          setIsRealData(true)
+          runAIAnalysis(nets)
+          return
+        }
+        setScanError('Agente respondeu mas não encontrou redes. Verifique se o WiFi está ativo.')
+        return
+      }
+
+      // 2. Extensão Chrome (requer native-host instalado)
       if (extensionReady) {
         const extNetworks = await scanViaExtension()
         if (extNetworks) {
@@ -93,7 +144,7 @@ export default function WiFiPage() {
         }
       }
 
-      // 2. Fall back to server-side API (works only when running locally)
+      // 3. API do servidor (funciona apenas quando rodando localmente com npm run dev)
       const res = await fetch('/api/wifi/scan')
       const data = await res.json()
       if (data.error) {
@@ -103,15 +154,15 @@ export default function WiFiPage() {
         setIsRealData(true)
         runAIAnalysis(data.networks)
       } else {
-        setScanError('Nenhuma rede encontrada. Verifique se o WiFi está ativo.')
+        setScanError('Nenhuma rede encontrada. Inicie o agente local ou a extensão Chrome.')
       }
     } catch {
-      setScanError('Erro ao conectar com a API de scan.')
+      setScanError('Erro ao escanear. Verifique se o agente local está rodando.')
     } finally {
       setScanning(false)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [extensionReady])
+  }, [agentReady, extensionReady])
 
   const runAIAnalysis = useCallback(async (nets: WiFiNetwork[]) => {
     setAnalyzing(true)
@@ -177,17 +228,67 @@ export default function WiFiPage() {
         </button>
       </div>
 
-      {!extensionReady && (
-        <div className="mb-4 px-4 py-3 rounded-lg border border-[#1a2744] bg-[#050a1a] text-gray-400 text-sm flex items-start gap-3">
-          <Puzzle className="w-4 h-4 mt-0.5 shrink-0 text-cyan-400" />
-          <div>
-            <span className="font-semibold text-white">Extensão não detectada</span>
-            <p className="text-xs text-gray-500 mt-0.5">
-              Para escanear redes reais no Vercel, instale a extensão Chrome em{' '}
-              <code className="bg-[#0a1128] px-1 rounded">extension/</code> e execute{' '}
-              <code className="bg-[#0a1128] px-1 rounded">native-host/install.ps1</code>.
-              Localmente, <code className="bg-[#0a1128] px-1 rounded">npm run dev</code> funciona sem extensão.
-            </p>
+      {/* Status do scanner */}
+      {agentReady ? (
+        <div className="mb-4 px-4 py-3 rounded-lg border border-green-500/30 bg-green-500/5 text-sm flex items-center gap-3">
+          <CheckCircle className="w-4 h-4 text-[#00ff88] shrink-0" />
+          <div className="flex-1 min-w-0">
+            <span className="font-semibold text-white">Agente local conectado</span>
+            <span className="text-xs text-gray-500 ml-2">
+              {agentPlatform === 'win32' ? 'Windows' : agentPlatform === 'darwin' ? 'macOS' : agentPlatform === 'linux' ? 'Linux' : agentPlatform ?? ''}
+              {' · '}porta {AGENT_PORT}
+            </span>
+          </div>
+          <span className="tag tag-green shrink-0">Scan real ativo</span>
+        </div>
+      ) : extensionReady ? (
+        <div className="mb-4 px-4 py-3 rounded-lg border border-cyan-500/30 bg-cyan-500/5 text-sm flex items-center gap-3">
+          <Puzzle className="w-4 h-4 text-[#00d4ff] shrink-0" />
+          <div className="flex-1">
+            <span className="font-semibold text-white">Extensão Chrome detectada</span>
+            <span className="text-xs text-gray-500 ml-2">native-host via extensão</span>
+          </div>
+          <span className="tag tag-cyan shrink-0">Scan real ativo</span>
+        </div>
+      ) : (
+        <div className="mb-4 rounded-lg border border-[#1a2744] bg-[#050a1a] text-sm overflow-hidden">
+          <div className="px-4 py-3 flex items-start gap-3">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-yellow-400" />
+            <div>
+              <span className="font-semibold text-white">Scanner não detectado</span>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Escolha uma das opções abaixo para escanear redes reais — funciona mesmo com o app rodando remotamente.
+              </p>
+            </div>
+          </div>
+          <div className="border-t border-[#1a2744] grid sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-[#1a2744]">
+            {/* Opção 1: Agente local */}
+            <div className="px-4 py-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Terminal className="w-3.5 h-3.5 text-[#00ff88]" />
+                <span className="text-xs font-semibold text-white uppercase tracking-wider">Opção 1 — Agente Local</span>
+                <span className="tag tag-green text-[10px]">Recomendado</span>
+              </div>
+              <p className="text-xs text-gray-500 mb-2">Rode na sua máquina (qualquer SO, sem instalar nada extra):</p>
+              <code className="block bg-[#0a1128] border border-[#1a2744] rounded px-3 py-2 text-[#00ff88] text-xs font-mono">
+                node wifi-agent.js
+              </code>
+              <p className="text-[11px] text-gray-600 mt-1.5">
+                O arquivo <code className="text-gray-400">wifi-agent.js</code> está na raiz do projeto.
+              </p>
+            </div>
+            {/* Opção 2: Extensão Chrome */}
+            <div className="px-4 py-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Puzzle className="w-3.5 h-3.5 text-[#00d4ff]" />
+                <span className="text-xs font-semibold text-white uppercase tracking-wider">Opção 2 — Extensão Chrome</span>
+              </div>
+              <p className="text-xs text-gray-500 mb-1">Instale a extensão em <code className="text-gray-400">extension/</code> e registre o native-host:</p>
+              <code className="block bg-[#0a1128] border border-[#1a2744] rounded px-3 py-2 text-[#00d4ff] text-xs font-mono">
+                powershell native-host/install.ps1
+              </code>
+              <p className="text-[11px] text-gray-600 mt-1.5">Somente Windows + Chrome.</p>
+            </div>
           </div>
         </div>
       )}
