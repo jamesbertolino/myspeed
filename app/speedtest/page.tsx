@@ -67,7 +67,9 @@ export default function SpeedTestPage() {
     for (let i = 0; i < PING_SAMPLES; i++) {
       if (cancelledRef.current) throw new Error('cancelled')
       const t0 = performance.now()
-      await fetch(`${srv.pingUrl}&_=${Date.now()}`, { cache: 'no-store' })
+      const pingIsExternal = srv.pingUrl.startsWith('http')
+      const pingUrl = pingIsExternal ? `${srv.pingUrl}?_=${Date.now()}` : `${srv.pingUrl}&_=${Date.now()}`
+      await fetch(pingUrl, { cache: 'no-store', ...(pingIsExternal ? { mode: 'no-cors' } : {}) })
       samples.push(performance.now() - t0)
       setCurrentPing(samples[samples.length - 1])
       setProgress(Math.round(((i + 1) / PING_SAMPLES) * 100))

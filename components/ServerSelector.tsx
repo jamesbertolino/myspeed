@@ -47,7 +47,7 @@ function stnetToTestServer(s: StnetServer): TestServer {
     provider: 'Speedtest.net',
     downloadUrl: `/api/speedtest/download?remote=${encodeURIComponent(downloadRemote)}`,
     uploadUrl: '/api/speedtest/upload',
-    pingUrl: `/api/speedtest/ping?target=${encodeURIComponent(s.host.split(':')[0])}`,
+    pingUrl: uploadUrl.replace(/\/upload\.php$/i, '/latency.txt'),
     cors: false,
   }
 }
