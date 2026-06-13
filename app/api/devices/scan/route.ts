@@ -180,23 +180,16 @@ export async function GET(req: NextRequest) {
       const subnetInfo = getLocalSubnet(preferSubnet)
       const subnetPrefix = subnetInfo?.subnet
 
-      // Discover all online hosts (TCP probe across full subnet)
+      // Discover all online hosts via TCP probe on the selected subnet only
       const onlineHosts = new Map<string, string | null>()
       if (subnetInfo) {
         send({ type: 'progress', message: `Varrendo ${subnetInfo.subnet}.0/24 (apenas online)...` })
         await discoverSubnet(subnetInfo.subnet, new Map(), (ip) => {
+          // Only accept IPs that belong to this /24 subnet (not broadcast)
+          const last = parseInt(ip.split('.')[3])
+          if (last === 0 || last === 255) return
           onlineHosts.set(ip, arpHosts.get(ip) ?? null)
         })
-      }
-
-      // Include ARP hosts only if they're confirmed online
-      for (const [ip, mac] of arpHosts.entries()) {
-        if (!/^[\d.]+$/.test(ip)) continue
-        if (subnetPrefix && !ip.startsWith(subnetPrefix + '.')) continue
-        if (!onlineHosts.has(ip)) {
-          // Verify before including
-          if (await isHostOnline(ip)) onlineHosts.set(ip, mac)
-        }
       }
 
       const hosts = Array.from(onlineHosts.entries())
