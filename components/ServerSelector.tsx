@@ -27,19 +27,25 @@ interface StnetServer {
   lat: string
   lon: string
   distance: number
+  url: string
 }
 
 type Tab = 'builtin' | 'speedtest'
 
 function stnetToTestServer(s: StnetServer): TestServer {
-  const baseUrl = s.host.startsWith('http') ? s.host : `https://${s.host}`
+  // Derive download URL from upload URL (e.g. .../upload.php → .../random4000x4000.jpg)
+  const uploadUrl = s.url || ''
+  const downloadRemote = uploadUrl
+    ? uploadUrl.replace(/upload\.php$/i, 'random4000x4000.jpg')
+    : `https://${s.host}/download?size=25000000`
+
   return {
     id: `stnet-${s.id}`,
-    name: `${s.sponsor}`,
+    name: s.sponsor,
     location: `${s.name}, ${s.country}`,
     flag: countryFlag(s.cc),
     provider: 'Speedtest.net',
-    downloadUrl: `/api/speedtest/download?remote=${encodeURIComponent(`${baseUrl}/download?size=25000000`)}`,
+    downloadUrl: `/api/speedtest/download?remote=${encodeURIComponent(downloadRemote)}`,
     uploadUrl: '/api/speedtest/upload',
     pingUrl: `/api/speedtest/ping?target=${encodeURIComponent(s.host.split(':')[0])}`,
     cors: false,
