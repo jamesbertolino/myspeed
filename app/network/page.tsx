@@ -132,14 +132,14 @@ export default function NetworkPage() {
   const lastLatency = pingData[pingData.length - 1]?.latency ?? null
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-4 md:p-6 max-w-5xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-white">Análise de Rede</h1>
+        <h1 className="text-xl md:text-2xl font-bold text-white">Análise de Rede</h1>
         <p className="text-sm text-gray-500 mt-1">Ping, Jitter, Traceroute e DNS</p>
       </div>
 
       {/* Tab Nav */}
-      <div className="flex gap-1 mb-6 bg-[#0a1128] rounded-xl p-1 border border-[#1a2744] w-fit">
+      <div className="flex gap-1 mb-6 bg-[#0a1128] rounded-xl p-1 border border-[#1a2744] w-full sm:w-fit overflow-x-auto">
         {([
           { id: 'ping', icon: Activity, label: 'Ping / Jitter' },
           { id: 'traceroute', icon: Network, label: 'Traceroute' },
@@ -315,7 +315,8 @@ export default function NetworkPage() {
                 Execute o traceroute para ver os saltos
               </div>
             ) : (
-              <div>
+              <div className="overflow-x-auto">
+                <div className="min-w-[480px]">
                 <div className="px-4 py-3 border-b border-[#1a2744] grid grid-cols-12 text-xs text-gray-500 uppercase tracking-wider font-semibold">
                   <span className="col-span-1">#</span>
                   <span className="col-span-4">Host</span>
@@ -355,6 +356,7 @@ export default function NetworkPage() {
                     Descobrindo próximo salto...
                   </div>
                 )}
+                </div>
               </div>
             )}
           </div>

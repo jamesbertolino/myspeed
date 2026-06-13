@@ -45,7 +45,7 @@ export default function StatCard({ label, value, unit, icon: Icon, color = 'cyan
         </div>
       ) : (
         <div className="flex items-end gap-1.5 mb-1">
-          <span className={clsx('text-4xl font-bold tracking-tight mono', c.text)}>{value}</span>
+          <span className={clsx('text-3xl md:text-4xl font-bold tracking-tight mono', c.text)}>{value}</span>
           {unit && <span className="text-sm text-gray-400 mb-1.5 font-medium">{unit}</span>}
         </div>
       )}

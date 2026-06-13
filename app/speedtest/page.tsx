@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { Download, Upload, Activity, Play, RotateCcw, CheckCircle, Clock } from 'lucide-react'
 import SpeedGauge from '@/components/SpeedGauge'
 import ServerSelector from '@/components/ServerSelector'
@@ -51,8 +51,16 @@ export default function SpeedTestPage() {
   const [speedHistory, setSpeedHistory] = useState<number[]>([])
   const [server, setServer] = useState<TestServer | null>(null)
   const [gaugeMax, setGaugeMax] = useState(MAX_GAUGE)
+  const [gaugeSize, setGaugeSize] = useState(240)
   const abortRef = useRef<AbortController | null>(null)
   const cancelledRef = useRef(false)
+
+  useEffect(() => {
+    const update = () => setGaugeSize(window.innerWidth < 480 ? 200 : 240)
+    update()
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [])
 
   const measurePing = async (srv: TestServer): Promise<{ avg: number; jitter: number }> => {
     const samples: number[] = []
@@ -269,9 +277,9 @@ export default function SpeedTestPage() {
   }[phase]
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-4 md:p-6 max-w-5xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-white">Teste de Velocidade</h1>
+        <h1 className="text-xl md:text-2xl font-bold text-white">Teste de Velocidade</h1>
         <p className="text-sm text-gray-500 mt-1">Meça download, upload, ping e jitter da sua conexão</p>
       </div>
 
@@ -279,7 +287,7 @@ export default function SpeedTestPage() {
       <ServerSelector selected={server} onChange={setServer} disabled={isRunning} />
 
       {/* Main Test Card */}
-      <div className="card p-8 mb-6">
+      <div className="card p-5 md:p-8 mb-6">
         <div className="flex flex-col items-center">
           {/* Gauge */}
           <div className="relative mb-6">
@@ -288,7 +296,7 @@ export default function SpeedTestPage() {
               maxValue={gaugeMax}
               label={phase === 'upload' ? 'UPLOAD' : 'DOWNLOAD'}
               color={gaugeColor}
-              size={240}
+              size={gaugeSize}
             />
             {phase !== 'idle' && phase !== 'done' && (
               <div className="absolute bottom-0 left-1/2 -translate-x-1/2 text-xs text-gray-600 mono whitespace-nowrap">

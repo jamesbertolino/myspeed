@@ -205,9 +205,9 @@ export default function ControllersPage() {
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
+    <div className="p-4 md:p-6 max-w-6xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-white">Controladores</h1>
+        <h1 className="text-xl md:text-2xl font-bold text-white">Controladores</h1>
         <p className="text-sm text-gray-500 mt-1">Conecte ao UniFi Controller ou MikroTik para análise em tempo real</p>
       </div>
 
@@ -361,7 +361,8 @@ export default function ControllersPage() {
               )}
 
               {unifiView === 'clients' && (
-                <div className="card overflow-hidden">
+                <div className="card overflow-x-auto">
+                  <div className="min-w-[560px]">
                   <div className="grid grid-cols-12 px-4 py-2 border-b border-[#1a2744] text-xs text-gray-500 uppercase tracking-wider font-semibold">
                     <span className="col-span-3">Host</span>
                     <span className="col-span-2">IP</span>
@@ -388,6 +389,7 @@ export default function ControllersPage() {
                     </div>
                   ))}
                   {unifiClients.length === 0 && <p className="p-4 text-gray-600 text-sm">Nenhum cliente ativo</p>}
+                  </div>
                 </div>
               )}
             </div>
@@ -518,7 +520,8 @@ export default function ControllersPage() {
               )}
 
               {mtView === 'interfaces' && (
-                <div className="card overflow-hidden">
+                <div className="card overflow-x-auto">
+                  <div className="min-w-[520px]">
                   <div className="grid grid-cols-12 px-4 py-2 border-b border-[#1a2744] text-xs text-gray-500 uppercase tracking-wider font-semibold">
                     <span className="col-span-3">Interface</span>
                     <span className="col-span-2">Tipo</span>
@@ -548,6 +551,7 @@ export default function ControllersPage() {
                     </div>
                   ))}
                   {mtInterfaces.length === 0 && <p className="p-4 text-gray-600 text-sm">Nenhuma interface encontrada</p>}
+                  </div>
                 </div>
               )}
 
@@ -559,7 +563,8 @@ export default function ControllersPage() {
                       Nenhum cliente wireless — verifique se o roteador tem interfaces sem fio ativas
                     </div>
                   ) : (
-                    <div className="card overflow-hidden">
+                    <div className="card overflow-x-auto">
+                      <div className="min-w-[460px]">
                       <div className="grid grid-cols-10 px-4 py-2 border-b border-[#1a2744] text-xs text-gray-500 uppercase tracking-wider font-semibold">
                         <span className="col-span-2">Interface</span>
                         <span className="col-span-3">MAC</span>
@@ -578,6 +583,7 @@ export default function ControllersPage() {
                           <span className="col-span-2 text-right text-gray-500">{c.uptime || '—'}</span>
                         </div>
                       ))}
+                      </div>
                     </div>
                   )}
                 </div>

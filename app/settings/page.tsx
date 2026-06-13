@@ -46,12 +46,12 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="p-6 max-w-2xl mx-auto">
+    <div className="p-4 md:p-6 max-w-2xl mx-auto">
       <div className="flex items-center justify-between mb-8">
         <div>
           <div className="flex items-center gap-3 mb-1">
             <Settings className="w-6 h-6 text-[#00d4ff]" />
-            <h1 className="text-2xl font-bold text-white">Configurações</h1>
+            <h1 className="text-xl md:text-2xl font-bold text-white">Configurações</h1>
           </div>
           <p className="text-sm text-gray-500">Preferências salvas localmente no navegador</p>
         </div>

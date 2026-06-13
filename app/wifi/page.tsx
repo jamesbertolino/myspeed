@@ -156,10 +156,10 @@ export default function WiFiPage() {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-4 md:p-6 max-w-5xl mx-auto">
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white">Analisador WiFi</h1>
+          <h1 className="text-xl md:text-2xl font-bold text-white">Analisador WiFi</h1>
           <p className="text-sm text-gray-500 mt-1">
             Visualize canais, interferências e recomendações
             {isRealData && <span className="ml-2 tag tag-green">Dados reais</span>}
