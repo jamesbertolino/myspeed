@@ -3,11 +3,12 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart3, Gauge, Activity, Wifi, Server, Zap, Radio, Settings, Menu, X, Monitor, Shield } from 'lucide-react'
+import { BarChart3, Gauge, Activity, Wifi, Server, Zap, Radio, Settings, Menu, X, Monitor, Shield, LogOut } from 'lucide-react'
+import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
 
 const nav = [
-  { href: '/', icon: BarChart3, label: 'Dashboard' },
+  { href: '/dashboard', icon: BarChart3, label: 'Dashboard' },
   { href: '/speedtest', icon: Gauge, label: 'Teste de Velocidade' },
   { href: '/network', icon: Activity, label: 'Análise de Rede' },
   { href: '/wifi', icon: Wifi, label: 'Analisador WiFi' },
@@ -74,6 +75,23 @@ function NavLinks({ onLinkClick }: { onLinkClick?: () => void }) {
   )
 }
 
+function LogoutButton() {
+  const router = useRouter()
+  const logout = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' })
+    router.push('/login')
+  }
+  return (
+    <div className="px-3 pb-1">
+      <button onClick={logout}
+        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-400 hover:text-red-400 hover:bg-red-500/5 transition-all">
+        <LogOut className="w-4 h-4 shrink-0" />
+        <span className="truncate">Sair</span>
+      </button>
+    </div>
+  )
+}
+
 function SidebarStatus() {
   return (
     <div className="px-5 py-4 border-t border-[#1a2744]">
@@ -88,7 +106,7 @@ function SidebarStatus() {
         </div>
         <div className="flex justify-between text-[11px]">
           <span className="text-gray-500">Versão</span>
-          <span className="text-gray-400">v2.0.0</span>
+          <span className="text-gray-400">v2.1.0</span>
         </div>
       </div>
     </div>
@@ -134,6 +152,7 @@ export default function Sidebar() {
           <Logo />
         </div>
         <NavLinks />
+        <LogoutButton />
         <SidebarStatus />
       </aside>
 
@@ -189,6 +208,7 @@ export default function Sidebar() {
         </div>
 
         <NavLinks onLinkClick={() => setMobileOpen(false)} />
+        <LogoutButton />
         <SidebarStatus />
       </aside>
     </>
