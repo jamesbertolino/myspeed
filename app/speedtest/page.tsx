@@ -17,8 +17,8 @@ const DOWNLOAD_CHUNK_BYTES = 25 * 1024 * 1024   // 25 MB per request
 const UPLOAD_CHUNK_BYTES   = 5  * 1024 * 1024   // 5 MB per request
 const PRE_TEST_DURATION_MS = 1500                // 1.5 s quick pre-test
 const PRE_TEST_CHUNK_BYTES = 2 * 1024 * 1024    // 2 MB pre-test chunk
-
-const CF_UPLOAD = 'https://speed.cloudflare.com/__up'
+const BG_CALIBRATE_MS      = 2000               // 2 s background calibration on page load
+const CF_DOWNLOAD_URL      = 'https://speed.cloudflare.com/__down'
 
 interface Result {
   ping: number
@@ -52,7 +52,9 @@ export default function SpeedTestPage() {
   const [server, setServer] = useState<TestServer | null>(null)
   const [gaugeMax, setGaugeMax] = useState(MAX_GAUGE)
   const [gaugeSize, setGaugeSize] = useState(240)
+  const [bgCalibrating, setBgCalibrating] = useState(true)
   const abortRef = useRef<AbortController | null>(null)
+  const bgAbortRef = useRef<AbortController | null>(null)
   const cancelledRef = useRef(false)
 
   useEffect(() => {
@@ -60,6 +62,49 @@ export default function SpeedTestPage() {
     update()
     window.addEventListener('resize', update)
     return () => window.removeEventListener('resize', update)
+  }, [])
+
+  // Background speed calibration on page load — runs while server selector pings
+  useEffect(() => {
+    const abort = new AbortController()
+    bgAbortRef.current = abort
+
+    const run = async () => {
+      try {
+        const startTime = performance.now()
+        let totalBytes = 0
+
+        while (performance.now() - startTime < BG_CALIBRATE_MS) {
+          if (abort.signal.aborted) break
+          const res = await fetch(
+            `${CF_DOWNLOAD_URL}?bytes=${PRE_TEST_CHUNK_BYTES}&_=${Date.now()}`,
+            { signal: abort.signal, cache: 'no-store' }
+          )
+          const reader = res.body!.getReader()
+          while (true) {
+            if (abort.signal.aborted) { reader.cancel(); break }
+            const { done, value } = await reader.read()
+            if (done) break
+            totalBytes += value?.byteLength ?? 0
+            if (performance.now() - startTime >= BG_CALIBRATE_MS) { reader.cancel(); break }
+          }
+          if (performance.now() - startTime >= BG_CALIBRATE_MS) break
+        }
+
+        if (!abort.signal.aborted && totalBytes > 0) {
+          const elapsed = (performance.now() - startTime) / 1000
+          const mbps = (totalBytes * 8) / (elapsed * 1e6)
+          setGaugeMax(pickGaugeMax(mbps))
+        }
+      } catch (_) {
+        // Silently ignore — network errors or intentional abort when test starts
+      } finally {
+        setBgCalibrating(false)
+      }
+    }
+
+    run()
+    return () => abort.abort()
   }, [])
 
   const measurePing = async (srv: TestServer): Promise<{ avg: number; jitter: number }> => {
@@ -212,6 +257,9 @@ export default function SpeedTestPage() {
   const runTest = useCallback(async () => {
     const srv = server
     if (!srv) return
+    // Cancel any background calibration still running
+    bgAbortRef.current?.abort()
+    setBgCalibrating(false)
     cancelledRef.current = false
     setPhase('pretest')
     setProgress(0)
@@ -289,9 +337,17 @@ export default function SpeedTestPage() {
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-xl md:text-2xl font-bold text-white">Teste de Velocidade</h1>
-        <p className="text-sm text-gray-500 mt-1">Meça download, upload, ping e jitter da sua conexão</p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl md:text-2xl font-bold text-white">Teste de Velocidade</h1>
+          <p className="text-sm text-gray-500 mt-1">Meça download, upload, ping e jitter da sua conexão</p>
+        </div>
+        {bgCalibrating && phase === 'idle' && (
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/20 shrink-0 mt-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+            <span className="text-[11px] text-cyan-400 whitespace-nowrap">Calibrando...</span>
+          </div>
+        )}
       </div>
 
       {/* Server Selector */}
