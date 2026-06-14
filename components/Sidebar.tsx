@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { BarChart3, Gauge, Activity, Wifi, Server, Zap, Radio, Settings, Menu, X, Monitor, Shield, LogOut } from 'lucide-react'
@@ -102,29 +102,9 @@ function latencyColor(ms: number | null) {
   return '#ff4d4d'
 }
 
-function playBeep(ms: number | null) {
-  try {
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
-    if (!AudioCtx) return
-    const ctx = new AudioCtx()
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.connect(gain)
-    gain.connect(ctx.destination)
-    osc.frequency.value = ms !== null && ms < 60 ? 1040 : ms !== null && ms < 150 ? 880 : 660
-    osc.type = 'sine'
-    gain.gain.setValueAtTime(0.18, ctx.currentTime)
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.12)
-    osc.start(ctx.currentTime)
-    osc.stop(ctx.currentTime + 0.12)
-    setTimeout(() => ctx.close(), 300)
-  } catch (_) {}
-}
-
 function SidebarStatus() {
   const [latency, setLatency] = useState<number | null>(null)
   const [beat, setBeat] = useState(0)
-  const audioUnlocked = useRef(false)
 
   const ping = useCallback(async () => {
     try {
@@ -135,20 +115,15 @@ function SidebarStatus() {
       const ms = Math.round(performance.now() - t0)
       setLatency(ms)
       setBeat(b => b + 1)
-      if (audioUnlocked.current) playBeep(ms)
-      const el = document.getElementById('sidebar-latency')
-      if (el) el.textContent = ms + ' ms'
       const mob = document.getElementById('mobile-latency')
       if (mob) mob.textContent = ms + ' ms'
     } catch (_) {}
   }, [])
 
   useEffect(() => {
-    const unlock = () => { audioUnlocked.current = true }
-    window.addEventListener('pointerdown', unlock, { once: true })
     ping()
     const id = setInterval(ping, 10_000)
-    return () => { clearInterval(id); window.removeEventListener('pointerdown', unlock) }
+    return () => { clearInterval(id) }
   }, [ping])
 
   const color = latencyColor(latency)
@@ -194,7 +169,7 @@ function SidebarStatus() {
         </div>
         <div className="flex justify-between text-[11px]">
           <span className="text-gray-500">Versão</span>
-          <span className="text-gray-400">v2.3.0</span>
+          <span className="text-gray-400">v2.4.0</span>
         </div>
       </div>
     </div>
