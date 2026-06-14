@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { BarChart3, Gauge, Activity, Wifi, Server, Zap, Radio, Settings, Menu, X, Monitor, Shield, LogOut } from 'lucide-react'
@@ -92,21 +92,109 @@ function LogoutButton() {
   )
 }
 
+// ECG path: flat → spike → flat (viewBox 0 0 80 36)
+const ECG_PATH = 'M0,18 L28,18 L31,18 L34,4 L37,32 L40,10 L43,18 L80,18'
+
+function latencyColor(ms: number | null) {
+  if (ms === null) return '#00d4ff'
+  if (ms < 60)  return '#00ff88'
+  if (ms < 150) return '#ffd700'
+  return '#ff4d4d'
+}
+
+function playBeep(ms: number | null) {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
+    if (!AudioCtx) return
+    const ctx = new AudioCtx()
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.frequency.value = ms !== null && ms < 60 ? 1040 : ms !== null && ms < 150 ? 880 : 660
+    osc.type = 'sine'
+    gain.gain.setValueAtTime(0.18, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.12)
+    osc.start(ctx.currentTime)
+    osc.stop(ctx.currentTime + 0.12)
+    setTimeout(() => ctx.close(), 300)
+  } catch (_) {}
+}
+
 function SidebarStatus() {
+  const [latency, setLatency] = useState<number | null>(null)
+  const [beat, setBeat] = useState(0)
+  const audioUnlocked = useRef(false)
+
+  const ping = useCallback(async () => {
+    try {
+      const t0 = performance.now()
+      await fetch('https://speed.cloudflare.com/__down?bytes=0&_=' + Date.now(), {
+        cache: 'no-store', mode: 'no-cors',
+      })
+      const ms = Math.round(performance.now() - t0)
+      setLatency(ms)
+      setBeat(b => b + 1)
+      if (audioUnlocked.current) playBeep(ms)
+      const el = document.getElementById('sidebar-latency')
+      if (el) el.textContent = ms + ' ms'
+      const mob = document.getElementById('mobile-latency')
+      if (mob) mob.textContent = ms + ' ms'
+    } catch (_) {}
+  }, [])
+
+  useEffect(() => {
+    const unlock = () => { audioUnlocked.current = true }
+    window.addEventListener('pointerdown', unlock, { once: true })
+    ping()
+    const id = setInterval(ping, 10_000)
+    return () => { clearInterval(id); window.removeEventListener('pointerdown', unlock) }
+  }, [ping])
+
+  const color = latencyColor(latency)
+
   return (
     <div className="px-5 py-4 border-t border-[#1a2744]">
       <div className="flex items-center gap-2 mb-3">
         <Radio className="w-3.5 h-3.5 text-[#00ff88]" />
         <span className="text-[11px] text-gray-500 font-medium">STATUS DO SISTEMA</span>
       </div>
+
+      {/* ECG cardiogram strip */}
+      <div className="mb-3 h-9 overflow-hidden">
+        <svg
+          key={beat}
+          viewBox="0 0 80 36"
+          preserveAspectRatio="none"
+          className="w-full h-full"
+        >
+          <path
+            d={ECG_PATH}
+            fill="none"
+            stroke={color}
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={{
+              filter: `drop-shadow(0 0 3px ${color})`,
+              strokeDasharray: 160,
+              strokeDashoffset: 160,
+              animation: 'ecg-draw 0.9s ease-out forwards',
+            }}
+          />
+        </svg>
+      </div>
+
       <div className="space-y-1.5">
         <div className="flex justify-between text-[11px]">
           <span className="text-gray-500">Latência</span>
-          <span className="text-[#00d4ff] mono" id="sidebar-latency">—</span>
+          <span className="mono font-semibold" style={{ color }}>
+            {latency !== null ? `${latency} ms` : '—'}
+          </span>
         </div>
         <div className="flex justify-between text-[11px]">
           <span className="text-gray-500">Versão</span>
-          <span className="text-gray-400">v2.2.0</span>
+          <span className="text-gray-400">v2.3.0</span>
         </div>
       </div>
     </div>

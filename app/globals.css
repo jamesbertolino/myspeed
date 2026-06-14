@@ -211,3 +211,8 @@ input.dark-input:focus {
 }
 
 input.dark-input::placeholder { color: #4a5568; }
+
+@keyframes ecg-draw {
+  from { stroke-dashoffset: 160; }
+  to   { stroke-dashoffset: 0; }
+}
