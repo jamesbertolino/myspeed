@@ -186,6 +186,53 @@ export default function SettingsPage() {
         </div>
       </section>
 
+      {/* Monitor ECG */}
+      <section className="card p-5 mb-4">
+        <h2 className="text-sm font-semibold text-white mb-1">Monitor ECG</h2>
+        <p className="text-xs text-gray-500 mb-4">Controla o cardiograma e beep no topo da tela</p>
+
+        <div className="mb-4">
+          <label className="text-xs text-gray-500 block mb-2">Intervalo de ping do monitor</label>
+          <div className="flex gap-2 flex-wrap">
+            {[5, 10, 30, 60].map(sec => (
+              <button
+                key={sec}
+                onClick={() => setSettings(s => ({ ...s, ecgPingInterval: sec }))}
+                className={clsx('px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all',
+                  settings.ecgPingInterval === sec
+                    ? 'bg-cyan-500/10 border-cyan-500/30 text-[#00d4ff]'
+                    : 'border-[#1a2744] text-gray-400 hover:text-white hover:bg-white/5'
+                )}
+              >
+                {sec}s
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <label className="text-xs text-gray-500 block mb-2">
+            Desvio de pitch do beep — <span className="text-white font-semibold">{settings.ecgPitchDev}%</span>
+            <span className="ml-2 text-gray-600">(±{Math.round(1000 * settings.ecgPitchDev / 100)} Hz em torno de 1000 Hz)</span>
+          </label>
+          <div className="flex gap-2 flex-wrap">
+            {[5, 10, 15, 20, 30].map(pct => (
+              <button
+                key={pct}
+                onClick={() => setSettings(s => ({ ...s, ecgPitchDev: pct }))}
+                className={clsx('px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all',
+                  settings.ecgPitchDev === pct
+                    ? 'bg-cyan-500/10 border-cyan-500/30 text-[#00d4ff]'
+                    : 'border-[#1a2744] text-gray-400 hover:text-white hover:bg-white/5'
+                )}
+              >
+                {pct}%
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
       <p className="text-xs text-gray-600 text-center mt-6">
         As configurações são salvas no localStorage deste navegador.
       </p>

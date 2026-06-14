@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { loadSettings } from '@/lib/settings'
 
 const BASE_BPM  = 72
 const SCROLL_PX = 2
@@ -17,14 +18,18 @@ function ecgValue(t: number): number {
   return 0
 }
 
-// Pitch baseado em latência: 0ms→1100Hz (ótimo), 100ms→1000Hz, 200ms+→900Hz (ruim)
+// Pitch baseado em latência + desvio configurável
+// 0ms → base+devHz (agudo), 100ms → base, 200ms → base-devHz (grave)
 function playBeep(latencyMs: number | null) {
   try {
     const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
     if (!AudioCtx) return
-    const ctx = new AudioCtx()
-    const now = ctx.currentTime
-    const freq = Math.max(900, Math.min(1100, 1100 - (latencyMs ?? 100)))
+    const ctx    = new AudioCtx()
+    const now    = ctx.currentTime
+    const devPct = loadSettings().ecgPitchDev
+    const devHz  = 1000 * devPct / 100
+    const ms     = latencyMs ?? 100
+    const freq   = Math.max(1000 - devHz, Math.min(1000 + devHz, (1000 + devHz) - ms * devHz / 100))
 
     const osc1  = ctx.createOscillator()
     const gain1 = ctx.createGain()
@@ -88,9 +93,19 @@ export default function EcgMonitor() {
         latencyRef.current = ms
       } catch (_) {}
     }
-    probe()
-    const id = setInterval(probe, 10_000)
-    return () => clearInterval(id)
+
+    let id: ReturnType<typeof setInterval>
+    const setup = () => {
+      clearInterval(id)
+      probe()
+      id = setInterval(probe, loadSettings().ecgPingInterval * 1000)
+    }
+    setup()
+    window.addEventListener('myspeed-settings-changed', setup)
+    return () => {
+      clearInterval(id)
+      window.removeEventListener('myspeed-settings-changed', setup)
+    }
   }, [])
 
   useEffect(() => {

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { loadSettings } from '@/lib/settings'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { BarChart3, Gauge, Activity, Wifi, Server, Zap, Radio, Settings, Menu, X, Monitor, Shield, LogOut } from 'lucide-react'
@@ -119,9 +120,12 @@ function mobileBeep(latencyMs: number | null) {
   try {
     const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
     if (!AudioCtx) return
-    const ctx = new AudioCtx()
-    const now = ctx.currentTime
-    const freq = Math.max(900, Math.min(1100, 1100 - (latencyMs ?? 100)))
+    const ctx    = new AudioCtx()
+    const now    = ctx.currentTime
+    const devPct = loadSettings().ecgPitchDev
+    const devHz  = 1000 * devPct / 100
+    const ms     = latencyMs ?? 100
+    const freq   = Math.max(1000 - devHz, Math.min(1000 + devHz, (1000 + devHz) - ms * devHz / 100))
     const osc1 = ctx.createOscillator(); const g1 = ctx.createGain()
     osc1.connect(g1); g1.connect(ctx.destination)
     osc1.type = 'sine'
@@ -173,9 +177,18 @@ function MobileEcgBar() {
         latencyRef.current = ms
       } catch (_) {}
     }
-    probe()
-    const id = setInterval(probe, 10_000)
-    return () => clearInterval(id)
+    let id: ReturnType<typeof setInterval>
+    const setup = () => {
+      clearInterval(id)
+      probe()
+      id = setInterval(probe, loadSettings().ecgPingInterval * 1000)
+    }
+    setup()
+    window.addEventListener('myspeed-settings-changed', setup)
+    return () => {
+      clearInterval(id)
+      window.removeEventListener('myspeed-settings-changed', setup)
+    }
   }, [])
 
   useEffect(() => {
@@ -210,13 +223,13 @@ function MobileEcgBar() {
         cycleMsRef.current = 60_000 / next
       }
 
-      // Beep no pico R
+      if (canvas.width < 1 || canvas.height < 1) return
+
+      // Beep no pico R — só dispara quando canvas visível (mobile)
       if (cycle !== lastCycleRef.current && t > 0.30 && t < 0.40 && audioRef.current) {
         lastCycleRef.current = cycle
         mobileBeep(latencyRef.current)
       }
-
-      if (canvas.width < 1 || canvas.height < 1) return
 
       const W   = canvas.width
       const H   = canvas.height
