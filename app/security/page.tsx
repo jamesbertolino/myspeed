@@ -40,7 +40,7 @@ interface DNSSecResult {
 // ── Threat Types ───────────────────────────────────────────────────────────────
 interface ThreatResult {
   ip: string; isPrivate?: boolean; message?: string
-  ipInfo?: { city: string; region: string; country: string; org: string; asn: string; isp: string; hostname?: string }
+  ipInfo?: { city: string; region: string; country: string; org: string; asn: string; isp: string; hostname?: string; timezone?: string }
   asnClass?: { type: string; label: string }
   dnsbl?: Array<{ name: string; host: string; description: string; listed: boolean; returnCode: string | null }>
   isTor?: boolean; listedCount?: number
