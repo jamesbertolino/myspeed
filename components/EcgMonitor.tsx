@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 
-const CYCLE_MS  = 1000  // 60 BPM — 1 batimento por segundo
-const SCROLL_PX = 2     // pixels CSS rolados por frame (~60fps)
+// Base 72 BPM (mais realista que 60), com jitter ±8 BPM por ciclo
+const BASE_BPM  = 72
+const SCROLL_PX = 2
 
 // Forma de onda ECG realista: P → QRS → T
 function ecgValue(t: number): number {
@@ -11,11 +12,11 @@ function ecgValue(t: number): number {
   // Onda P
   if (t < 0.22) { const d = (t - 0.15) / 0.07; return 0.18 * Math.exp(-d * d * 3) }
   if (t < 0.28) return 0
-  // Onda Q (mergulho)
+  // Onda Q
   if (t < 0.32) return -0.12 * Math.sin((t - 0.28) / 0.04 * Math.PI)
   // Onda R (pico — BEEP aqui)
   if (t < 0.36) return Math.sin((t - 0.32) / 0.04 * Math.PI)
-  // Onda S (mergulho)
+  // Onda S
   if (t < 0.40) return -0.22 * Math.sin((t - 0.36) / 0.04 * Math.PI)
   if (t < 0.44) return 0
   // Onda T
@@ -43,23 +44,26 @@ function playBeep() {
 }
 
 export default function EcgMonitor() {
-  const canvasRef    = useRef<HTMLCanvasElement>(null)
-  const pausedRef    = useRef(false)
-  const audioRef     = useRef(false)   // liberado após primeiro clique
-  const animRef      = useRef(0)
-  const prevYRef     = useRef<number | null>(null)
-  const lastCycleRef = useRef(-1)
+  const canvasRef     = useRef<HTMLCanvasElement>(null)
+  const pausedRef     = useRef(false)
+  const audioRef      = useRef(false)
+  const animRef       = useRef(0)
+  const prevYRef      = useRef<number | null>(null)
+  const lastCycleRef  = useRef(-1)
+  // Ciclo dinâmico com jitter
+  const cycleStartRef = useRef(0)   // performance.now() do início do ciclo atual
+  const cycleMsRef    = useRef(60_000 / BASE_BPM) // ms do ciclo atual
 
   const [paused,  setPaused]  = useState(false)
+  const [bpm,     setBpm]     = useState(BASE_BPM)
   const [latency, setLatency] = useState<number | null>(null)
 
   const toggle = useCallback(() => {
-    audioRef.current   = true   // destrava áudio na primeira interação
-    pausedRef.current  = !pausedRef.current
+    audioRef.current  = true
+    pausedRef.current = !pausedRef.current
     setPaused(p => !p)
   }, [])
 
-  // Sonda de latência a cada 10s (apenas display)
   useEffect(() => {
     const probe = async () => {
       try {
@@ -75,7 +79,6 @@ export default function EcgMonitor() {
     return () => clearInterval(id)
   }, [])
 
-  // Canvas animation loop
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -93,6 +96,10 @@ export default function EcgMonitor() {
     const ro = new ResizeObserver(resize)
     ro.observe(canvas)
 
+    // Inicializa o primeiro ciclo
+    cycleStartRef.current = performance.now()
+    cycleMsRef.current    = 60_000 / BASE_BPM
+
     const draw = (now: number) => {
       animRef.current = requestAnimationFrame(draw)
       if (pausedRef.current) return
@@ -102,11 +109,27 @@ export default function EcgMonitor() {
       const MID = H * 0.5
       const AMP = H * 0.4
 
-      // Rola o canvas para a esquerda
+      // Posição dentro do ciclo atual
+      const elapsed = now - cycleStartRef.current
+      const cycleMs = cycleMsRef.current
+      const t       = Math.min(elapsed / cycleMs, 1)
+      const cycle   = Math.floor(now / cycleMs)   // só para detect de mudança
+
+      // Avança para próximo ciclo com jitter
+      if (elapsed >= cycleMs) {
+        cycleStartRef.current = now
+        // Jitter: ±8 BPM → ms entre 60_000/80 e 60_000/64
+        const newBpm = BASE_BPM + (Math.random() * 16 - 8) | 0
+        const clampedBpm = Math.max(55, Math.min(85, newBpm))
+        cycleMsRef.current = 60_000 / clampedBpm
+        setBpm(clampedBpm)
+      }
+
+      // Rola canvas para a esquerda
       const img = ctx.getImageData(SCROLL_PX, 0, W - SCROLL_PX, H)
       ctx.putImageData(img, 0, 0)
 
-      // Limpa faixa direita + linha de base faint
+      // Limpa faixa direita + baseline faint
       ctx.fillStyle = BG
       ctx.fillRect(W - SCROLL_PX - 1, 0, SCROLL_PX + 2, H)
       ctx.strokeStyle = 'rgba(0,255,65,0.06)'
@@ -116,13 +139,10 @@ export default function EcgMonitor() {
       ctx.lineTo(W, MID)
       ctx.stroke()
 
-      // Valor ECG no instante atual
-      const t     = (now % CYCLE_MS) / CYCLE_MS
-      const cycle = Math.floor(now / CYCLE_MS)
-      const val   = ecgValue(t)
-      const y     = MID - val * AMP
+      const val = ecgValue(t)
+      const y   = MID - val * AMP
 
-      // Dispara beep no pico R
+      // Beep no pico R (t 0.30–0.40), uma vez por ciclo
       if (cycle !== lastCycleRef.current && t > 0.30 && t < 0.40 && audioRef.current) {
         lastCycleRef.current = cycle
         playBeep()
@@ -141,7 +161,7 @@ export default function EcgMonitor() {
       ctx.shadowBlur  = 0
       prevYRef.current = y
 
-      // Ponto cursor na ponta
+      // Cursor na ponta
       ctx.fillStyle   = '#00ff41'
       ctx.shadowBlur  = 12
       ctx.shadowColor = '#00ff41'
@@ -180,9 +200,9 @@ export default function EcgMonitor() {
       <div className="flex flex-col items-center gap-0.5 shrink-0 w-8">
         <div style={{
           width: 8, height: 8, borderRadius: '50%',
-          background:  paused ? '#1a2d1a' : '#00ff41',
-          boxShadow:   paused ? 'none'    : '0 0 8px #00ff41, 0 0 16px #00ff4166',
-          animation:   paused ? 'none'    : 'pulse 1s ease-in-out infinite',
+          background: paused ? '#1a2d1a' : '#00ff41',
+          boxShadow:  paused ? 'none'    : '0 0 8px #00ff41, 0 0 16px #00ff4166',
+          animation:  paused ? 'none'    : 'pulse 1s ease-in-out infinite',
         }} />
         <span style={{
           fontSize: 7, fontWeight: 700, letterSpacing: '0.12em',
@@ -207,7 +227,7 @@ export default function EcgMonitor() {
           color: paused ? '#1a2d1a' : '#00ff41',
           textShadow: paused ? 'none' : '0 0 12px #00ff41',
         }}>
-          {paused ? '--' : '60'}
+          {paused ? '--' : bpm}
         </p>
       </div>
 
