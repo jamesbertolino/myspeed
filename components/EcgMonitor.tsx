@@ -24,22 +24,48 @@ function ecgValue(t: number): number {
   return 0
 }
 
-function playBeep() {
+// Beep realista de monitor de UTI
+// - pitch sobe com o BPM (como monitores Philips/GE reais)
+// - ataque linear ~4ms + decay exponencial ~100ms
+// - 2º harmônico a 20% para dar corpo/brilho
+// - leve chirp de +40 Hz ao longo do beep
+function playBeep(bpm: number) {
   try {
     const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
     if (!AudioCtx) return
-    const ctx = new AudioCtx()
-    const osc  = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.connect(gain)
-    gain.connect(ctx.destination)
-    osc.frequency.value = 1040
-    osc.type = 'sine'
-    gain.gain.setValueAtTime(0.22, ctx.currentTime)
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.09)
-    osc.start(ctx.currentTime)
-    osc.stop(ctx.currentTime + 0.09)
-    setTimeout(() => ctx.close(), 400)
+    const ctx  = new AudioCtx()
+    const now  = ctx.currentTime
+    // BPM 55→85 mapeia para 880→1200 Hz
+    const freq = 880 + ((bpm - 55) / 30) * 320
+
+    // Tom fundamental
+    const osc1  = ctx.createOscillator()
+    const gain1 = ctx.createGain()
+    osc1.connect(gain1)
+    gain1.connect(ctx.destination)
+    osc1.type = 'sine'
+    osc1.frequency.setValueAtTime(freq, now)
+    osc1.frequency.linearRampToValueAtTime(freq + 40, now + 0.10)
+    gain1.gain.setValueAtTime(0, now)
+    gain1.gain.linearRampToValueAtTime(0.28, now + 0.004)   // ataque rápido
+    gain1.gain.exponentialRampToValueAtTime(0.0001, now + 0.11)
+    osc1.start(now)
+    osc1.stop(now + 0.12)
+
+    // 2º harmônico (freq×2) — 20% do volume, decai mais rápido
+    const osc2  = ctx.createOscillator()
+    const gain2 = ctx.createGain()
+    osc2.connect(gain2)
+    gain2.connect(ctx.destination)
+    osc2.type = 'sine'
+    osc2.frequency.value = freq * 2
+    gain2.gain.setValueAtTime(0, now)
+    gain2.gain.linearRampToValueAtTime(0.07, now + 0.003)
+    gain2.gain.exponentialRampToValueAtTime(0.0001, now + 0.06)
+    osc2.start(now)
+    osc2.stop(now + 0.07)
+
+    setTimeout(() => ctx.close(), 500)
   } catch (_) {}
 }
 
@@ -145,7 +171,7 @@ export default function EcgMonitor() {
       // Beep no pico R (t 0.30–0.40), uma vez por ciclo
       if (cycle !== lastCycleRef.current && t > 0.30 && t < 0.40 && audioRef.current) {
         lastCycleRef.current = cycle
-        playBeep()
+        playBeep(Math.round(60_000 / cycleMs))
       }
 
       // Traço ECG com glow
