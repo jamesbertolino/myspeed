@@ -143,7 +143,7 @@ function MobileEcgBar() {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')!
-    const BG  = '#020a02'
+    const BG  = '#080e20'
 
     const resize = () => {
       canvas.width  = canvas.offsetWidth
@@ -210,11 +210,7 @@ function MobileEcgBar() {
     >
       <canvas
         ref={canvasRef}
-        style={{
-          flex: 1, minWidth: 0, height: 28, display: 'block',
-          borderRadius: 4, background: '#020a02',
-          border: '1px solid rgba(0,255,65,0.15)',
-        }}
+        style={{ flex: 1, minWidth: 0, height: 28, display: 'block' }}
       />
       <span style={{
         fontFamily: 'monospace', fontSize: 12, fontWeight: 700,

@@ -17,14 +17,14 @@ function ecgValue(t: number): number {
   return 0
 }
 
-// Pitch base 1000 Hz, variação máxima ±10% (900–1100 Hz)
-function playBeep(bpm: number) {
+// Pitch baseado em latência: 0ms→1100Hz (ótimo), 100ms→1000Hz, 200ms+→900Hz (ruim)
+function playBeep(latencyMs: number | null) {
   try {
     const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
     if (!AudioCtx) return
     const ctx = new AudioCtx()
     const now = ctx.currentTime
-    const freq = 900 + ((Math.max(55, Math.min(85, bpm)) - 55) / 30) * 200
+    const freq = Math.max(900, Math.min(1100, 1100 - (latencyMs ?? 100)))
 
     const osc1  = ctx.createOscillator()
     const gain1 = ctx.createGain()
@@ -64,6 +64,7 @@ export default function EcgMonitor() {
   const lastCycleRef  = useRef(-1)
   const cycleStartRef = useRef(0)
   const cycleMsRef    = useRef(60_000 / BASE_BPM)
+  const latencyRef    = useRef<number | null>(null)
 
   const [paused,  setPaused]  = useState(false)
   const [bpm,     setBpm]     = useState(BASE_BPM)
@@ -82,7 +83,9 @@ export default function EcgMonitor() {
         await fetch('https://speed.cloudflare.com/__down?bytes=0&_=' + Date.now(), {
           cache: 'no-store', mode: 'no-cors',
         })
-        setLatency(Math.round(performance.now() - t0))
+        const ms = Math.round(performance.now() - t0)
+        setLatency(ms)
+        latencyRef.current = ms
       } catch (_) {}
     }
     probe()
@@ -167,7 +170,7 @@ export default function EcgMonitor() {
 
       if (cycle !== lastCycleRef.current && t > 0.30 && t < 0.40 && audioRef.current) {
         lastCycleRef.current = cycle
-        playBeep(Math.round(60_000 / cycleMs))
+        playBeep(latencyRef.current)
       }
     }
 
