@@ -115,6 +115,33 @@ function miniEcgValue(t: number): number {
   return 0
 }
 
+function mobileBeep(latencyMs: number | null) {
+  try {
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+    if (!AudioCtx) return
+    const ctx = new AudioCtx()
+    const now = ctx.currentTime
+    const freq = Math.max(900, Math.min(1100, 1100 - (latencyMs ?? 100)))
+    const osc1 = ctx.createOscillator(); const g1 = ctx.createGain()
+    osc1.connect(g1); g1.connect(ctx.destination)
+    osc1.type = 'sine'
+    osc1.frequency.setValueAtTime(freq, now)
+    osc1.frequency.linearRampToValueAtTime(freq + 30, now + 0.10)
+    g1.gain.setValueAtTime(0, now)
+    g1.gain.linearRampToValueAtTime(0.28, now + 0.004)
+    g1.gain.exponentialRampToValueAtTime(0.0001, now + 0.11)
+    osc1.start(now); osc1.stop(now + 0.12)
+    const osc2 = ctx.createOscillator(); const g2 = ctx.createGain()
+    osc2.connect(g2); g2.connect(ctx.destination)
+    osc2.type = 'sine'; osc2.frequency.value = freq * 2
+    g2.gain.setValueAtTime(0, now)
+    g2.gain.linearRampToValueAtTime(0.07, now + 0.003)
+    g2.gain.exponentialRampToValueAtTime(0.0001, now + 0.06)
+    osc2.start(now); osc2.stop(now + 0.07)
+    setTimeout(() => ctx.close(), 500)
+  } catch (_) {}
+}
+
 // Mini monitor no header mobile — max 30% da largura da tela
 function MobileEcgBar() {
   const canvasRef     = useRef<HTMLCanvasElement>(null)
@@ -122,7 +149,17 @@ function MobileEcgBar() {
   const prevYRef      = useRef<number | null>(null)
   const cycleStartRef = useRef(0)
   const cycleMsRef    = useRef(60_000 / 72)
+  const audioRef      = useRef(false)
+  const lastCycleRef  = useRef(-1)
+  const latencyRef    = useRef<number | null>(null)
   const [latency, setLatency] = useState<number | null>(null)
+
+  // Destrava áudio no primeiro toque (qualquer lugar da tela)
+  useEffect(() => {
+    const unlock = () => { audioRef.current = true }
+    window.addEventListener('pointerdown', unlock, { once: true })
+    return () => window.removeEventListener('pointerdown', unlock)
+  }, [])
 
   useEffect(() => {
     const probe = async () => {
@@ -131,7 +168,9 @@ function MobileEcgBar() {
         await fetch('https://speed.cloudflare.com/__down?bytes=0&_=' + Date.now(), {
           cache: 'no-store', mode: 'no-cors',
         })
-        setLatency(Math.round(performance.now() - t0))
+        const ms = Math.round(performance.now() - t0)
+        setLatency(ms)
+        latencyRef.current = ms
       } catch (_) {}
     }
     probe()
@@ -163,11 +202,18 @@ function MobileEcgBar() {
       const elapsed = now - cycleStartRef.current
       const cycleMs = cycleMsRef.current
       const t       = Math.min(elapsed / cycleMs, 1)
+      const cycle   = Math.floor(now / cycleMs)
 
       if (elapsed >= cycleMs) {
         cycleStartRef.current = now
         const next = Math.max(55, Math.min(85, 72 + ((Math.random() * 16 - 8) | 0)))
         cycleMsRef.current = 60_000 / next
+      }
+
+      // Beep no pico R
+      if (cycle !== lastCycleRef.current && t > 0.30 && t < 0.40 && audioRef.current) {
+        lastCycleRef.current = cycle
+        mobileBeep(latencyRef.current)
       }
 
       if (canvas.width < 1 || canvas.height < 1) return

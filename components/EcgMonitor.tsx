@@ -213,28 +213,18 @@ export default function EcgMonitor() {
 
       <canvas ref={canvasRef} className="flex-1" style={{ height: 44, display: 'block' }} />
 
+      {/* Latência ms — display principal, substitui BPM */}
       <div className="text-center shrink-0">
-        <p style={{ fontSize: 9, letterSpacing: '0.15em', color: '#00ff4133', marginBottom: 1 }}>BPM</p>
+        <p style={{ fontSize: 9, letterSpacing: '0.15em', marginBottom: 1, color: paused ? '#1a2d1a' : latColor + '88' }}>PING</p>
         <p style={{
           fontSize: 22, fontWeight: 900, fontFamily: 'monospace', lineHeight: 1,
-          color: paused ? '#1a2d1a' : '#00ff41',
-          textShadow: paused ? 'none' : '0 0 12px #00ff41',
+          color: paused ? '#1a2d1a' : (latency !== null ? latColor : '#00ff4144'),
+          textShadow: paused ? 'none' : `0 0 12px ${latColor}`,
         }}>
-          {paused ? '--' : bpm}
+          {paused ? '--' : latency !== null ? latency : '—'}
+          {!paused && latency !== null && <span style={{ fontSize: 10, fontWeight: 400, marginLeft: 2 }}>ms</span>}
         </p>
       </div>
-
-      {latency !== null && (
-        <div className="text-center shrink-0 border-l pl-4" style={{ borderColor: '#00ff4122' }}>
-          <p style={{ fontSize: 9, letterSpacing: '0.15em', marginBottom: 1, color: latColor + '55' }}>PING</p>
-          <p style={{
-            fontSize: 20, fontWeight: 900, fontFamily: 'monospace', lineHeight: 1,
-            color: latColor, textShadow: `0 0 10px ${latColor}88`,
-          }}>
-            {latency}<span style={{ fontSize: 10, fontWeight: 400, marginLeft: 2 }}>ms</span>
-          </p>
-        </div>
-      )}
     </div>
   )
 }
