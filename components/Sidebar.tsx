@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { BarChart3, Gauge, Activity, Wifi, Server, Zap, Radio, Settings, Menu, X, Monitor, Shield, LogOut } from 'lucide-react'
@@ -102,6 +102,131 @@ function latencyColor(ms: number | null) {
   return '#ff4d4d'
 }
 
+// Mini ECG waveform (P-QRS-T)
+function miniEcgValue(t: number): number {
+  if (t < 0.08) return 0
+  if (t < 0.22) { const d = (t - 0.15) / 0.07; return 0.18 * Math.exp(-d * d * 3) }
+  if (t < 0.28) return 0
+  if (t < 0.32) return -0.12 * Math.sin((t - 0.28) / 0.04 * Math.PI)
+  if (t < 0.36) return Math.sin((t - 0.32) / 0.04 * Math.PI)
+  if (t < 0.40) return -0.22 * Math.sin((t - 0.36) / 0.04 * Math.PI)
+  if (t < 0.44) return 0
+  if (t < 0.66) { const d = (t - 0.55) / 0.11; return 0.28 * Math.exp(-d * d * 2.5) }
+  return 0
+}
+
+// Mini monitor no header mobile — max 30% da largura da tela
+function MobileEcgBar() {
+  const canvasRef     = useRef<HTMLCanvasElement>(null)
+  const animRef       = useRef(0)
+  const prevYRef      = useRef<number | null>(null)
+  const cycleStartRef = useRef(0)
+  const cycleMsRef    = useRef(60_000 / 72)
+  const [latency, setLatency] = useState<number | null>(null)
+
+  useEffect(() => {
+    const probe = async () => {
+      try {
+        const t0 = performance.now()
+        await fetch('https://speed.cloudflare.com/__down?bytes=0&_=' + Date.now(), {
+          cache: 'no-store', mode: 'no-cors',
+        })
+        setLatency(Math.round(performance.now() - t0))
+      } catch (_) {}
+    }
+    probe()
+    const id = setInterval(probe, 10_000)
+    return () => clearInterval(id)
+  }, [])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')!
+    const BG  = '#020a02'
+
+    const resize = () => {
+      canvas.width  = canvas.offsetWidth
+      canvas.height = canvas.offsetHeight
+      ctx.fillStyle = BG
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      prevYRef.current = null
+    }
+    resize()
+    const ro = new ResizeObserver(resize)
+    ro.observe(canvas)
+    cycleStartRef.current = performance.now()
+
+    const draw = (now: number) => {
+      animRef.current = requestAnimationFrame(draw)
+
+      const elapsed = now - cycleStartRef.current
+      const cycleMs = cycleMsRef.current
+      const t       = Math.min(elapsed / cycleMs, 1)
+
+      if (elapsed >= cycleMs) {
+        cycleStartRef.current = now
+        const next = Math.max(55, Math.min(85, 72 + ((Math.random() * 16 - 8) | 0)))
+        cycleMsRef.current = 60_000 / next
+      }
+
+      if (canvas.width < 1 || canvas.height < 1) return
+
+      const W   = canvas.width
+      const H   = canvas.height
+      const MID = H * 0.5
+      const AMP = H * 0.42
+
+      const img = ctx.getImageData(2, 0, W - 2, H)
+      ctx.putImageData(img, 0, 0)
+      ctx.fillStyle = BG
+      ctx.fillRect(W - 3, 0, 3, H)
+
+      const y  = MID - miniEcgValue(t) * AMP
+      const py = prevYRef.current ?? y
+
+      ctx.beginPath()
+      ctx.moveTo(W - 2, py)
+      ctx.lineTo(W - 1, y)
+      ctx.strokeStyle = '#00ff41'
+      ctx.lineWidth   = 1.5
+      ctx.shadowBlur  = 5
+      ctx.shadowColor = '#00ff41'
+      ctx.stroke()
+      ctx.shadowBlur  = 0
+      prevYRef.current = y
+    }
+
+    animRef.current = requestAnimationFrame(draw)
+    return () => { cancelAnimationFrame(animRef.current); ro.disconnect() }
+  }, [])
+
+  const color = latencyColor(latency)
+
+  return (
+    <div
+      className="ml-auto flex items-center gap-2"
+      style={{ maxWidth: '30vw', width: '30vw' }}
+    >
+      <canvas
+        ref={canvasRef}
+        style={{
+          flex: 1, minWidth: 0, height: 28, display: 'block',
+          borderRadius: 4, background: '#020a02',
+          border: '1px solid rgba(0,255,65,0.15)',
+        }}
+      />
+      <span style={{
+        fontFamily: 'monospace', fontSize: 12, fontWeight: 700,
+        color, flexShrink: 0, whiteSpace: 'nowrap',
+        textShadow: `0 0 8px ${color}88`,
+      }}>
+        {latency !== null ? `${latency}ms` : '—'}
+      </span>
+    </div>
+  )
+}
+
 function SidebarStatus() {
   const [latency, setLatency] = useState<number | null>(null)
   const [beat, setBeat] = useState(0)
@@ -115,8 +240,6 @@ function SidebarStatus() {
       const ms = Math.round(performance.now() - t0)
       setLatency(ms)
       setBeat(b => b + 1)
-      const mob = document.getElementById('mobile-latency')
-      if (mob) mob.textContent = ms + ' ms'
     } catch (_) {}
   }, [])
 
@@ -229,17 +352,15 @@ export default function Sidebar() {
           <Menu className="w-5 h-5" />
         </button>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2.5 shrink-0">
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-cyan-400 to-purple-600 flex items-center justify-center">
             <Zap className="w-3.5 h-3.5 text-white" />
           </div>
           <span className="text-white font-bold text-sm">MySpeed</span>
         </div>
 
-        <div className="ml-auto flex items-center gap-2">
-          <span className="text-[11px] text-gray-600">Latência</span>
-          <span className="text-[11px] text-[#00d4ff] mono" id="mobile-latency">—</span>
-        </div>
+        {/* Mini ECG monitor — substitui o texto de latência, max 30% da tela */}
+        <MobileEcgBar />
       </header>
 
       {/* ── Mobile Drawer Backdrop ── */}
