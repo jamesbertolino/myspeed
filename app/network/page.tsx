@@ -5,11 +5,13 @@ import {
   Activity, Search, Network, Play, Square, AlertTriangle,
   CheckCircle, Clock, Globe, ChevronRight, Loader2,
   Radar, Shield, ShieldAlert, ShieldCheck, ShieldOff,
-  Terminal, Database, Lock, Server, Zap,
+  Terminal, Database, Lock, Server, Zap, Save, FileDown,
 } from 'lucide-react'
 import LatencyChart from '@/components/LatencyChart'
 import { latencyColor, calcJitter, jitterColor, jitterLabel, latencyLabel } from '@/lib/utils'
 import clsx from 'clsx'
+import ReportModal from '@/components/ReportModal'
+import type { RiskLevel, VulnInfo, ScanPort, ScanResult, SSLResult, ThreatResult, BaselineSnapshot } from '@/types/network'
 
 interface PingPoint { t: number; latency: number }
 interface TraceHop {
@@ -32,53 +34,7 @@ interface DnsResult {
   error?: string
 }
 
-interface ScanPort {
-  port: number
-  service: string
-  banner?: string
-}
 
-interface ScanResult {
-  host: string
-  ip: string
-  open: ScanPort[]
-  total: number
-  scanned: number
-}
-
-interface SSLResult {
-  host: string
-  daysUntilExpiry: number
-  expired: boolean
-  selfSigned: boolean
-  protocol: string
-  grade: 'A+' | 'A' | 'B' | 'C' | 'F'
-  issuer: Record<string, string>
-  issues: Array<{ severity: string; message: string }>
-  cipher: { name: string }
-  error?: string
-}
-
-interface ThreatResult {
-  ip: string
-  ipInfo?: { country: string; org: string; city: string; region: string }
-  isTor?: boolean
-  listedCount?: number
-  riskScore?: number
-  riskLevel?: string
-  dnsbl?: Array<{ name: string; listed: boolean; description: string }>
-  flags?: string[]
-  error?: string
-}
-
-type RiskLevel = 'critical' | 'high' | 'medium' | 'low' | 'info'
-
-interface VulnInfo {
-  risk: RiskLevel
-  issues: string[]
-  cves: string[]
-  fix: string
-}
 
 const VULN_DB: Record<string, VulnInfo> = {
   'FTP': {
@@ -333,6 +289,8 @@ export default function NetworkPage() {
   const [expandedPort, setExpandedPort] = useState<number | null>(null)
   const [scanMode, setScanMode] = useState<'common' | 'custom'>('common')
   const [customPorts, setCustomPorts] = useState('')
+  const [baseline, setBaseline] = useState<BaselineSnapshot | null>(null)
+  const [reportModalOpen, setReportModalOpen] = useState(false)
 
   // Auto-fetched enrichment after scan
   const [sslResult, setSslResult] = useState<SSLResult | null>(null)
@@ -377,6 +335,26 @@ export default function NetworkPage() {
   }
 
   useEffect(() => () => { if (pingRef.current) clearInterval(pingRef.current) }, [])
+
+  // Load baseline from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('scan_baseline')
+      if (stored) setBaseline(JSON.parse(stored))
+    } catch { /* ignore */ }
+  }, [])
+
+  const saveBaseline = () => {
+    if (!scanResult || !analysis) return
+    const snap: BaselineSnapshot = {
+      scan: scanResult,
+      score: analysis.score,
+      counts: analysis.counts,
+      date: new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' }),
+    }
+    localStorage.setItem('scan_baseline', JSON.stringify(snap))
+    setBaseline(snap)
+  }
 
   // Auto-enrich scan results with SSL + threat intelligence
   useEffect(() => {
@@ -1070,6 +1048,27 @@ export default function NetworkPage() {
             </div>
           ) : analysis && (
             <>
+              {/* Action bar */}
+              <div className="flex flex-wrap gap-2 mb-4">
+                <button
+                  onClick={saveBaseline}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold border border-[#1a2744] text-gray-400 hover:text-white hover:border-gray-600 transition-all"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  Salvar como Linha de Base
+                </button>
+                {baseline && (
+                  <span className="text-xs text-gray-600 self-center">Base: {baseline.date}</span>
+                )}
+                <button
+                  onClick={() => setReportModalOpen(true)}
+                  className="flex items-center gap-2 btn-cyan px-3 py-2 rounded-lg text-xs font-semibold"
+                >
+                  <FileDown className="w-3.5 h-3.5" />
+                  Exportar Relatório PDF
+                </button>
+              </div>
+
               {/* Score + Summary */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Score gauge */}
@@ -1333,6 +1332,16 @@ export default function NetworkPage() {
                   ⚠️ Esta análise é para fins educacionais e auditoria autorizada. Execute scans apenas em sistemas que você tem permissão para testar.
                 </div>
               </div>
+
+              <ReportModal
+                open={reportModalOpen}
+                onClose={() => setReportModalOpen(false)}
+                scan={scanResult!}
+                analysis={analysis}
+                ssl={sslResult}
+                threat={threatResult}
+                baseline={baseline}
+              />
             </>
           )}
         </div>
