@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { X, FileDown, Shield, Lock, Globe, CheckCircle2 } from 'lucide-react'
 import type { ScanResult, Analysis, SSLResult, ThreatResult, BaselineSnapshot } from '@/types/network'
 import { generateReport } from '@/lib/reportGenerator'
@@ -21,41 +21,70 @@ export default function ReportModal({ open, onClose, scan, analysis, ssl, threat
   const [includeBaseline, setIncludeBaseline] = useState(true)
   const [generating, setGenerating] = useState(false)
 
+  // Restore persisted values on mount
   useEffect(() => {
-    setClientName(localStorage.getItem('report_client') ?? '')
-    setAnalystName(localStorage.getItem('report_analyst') ?? '')
+    const savedClient = localStorage.getItem('report_client')
+    const savedAnalyst = localStorage.getItem('report_analyst')
+    if (savedClient) setClientName(savedClient)
+    if (savedAnalyst) setAnalystName(savedAnalyst)
   }, [])
 
-  if (!open) return null
+  // Persist client name on change
+  useEffect(() => {
+    localStorage.setItem('report_client', clientName)
+  }, [clientName])
+
+  // Persist analyst name on change
+  useEffect(() => {
+    localStorage.setItem('report_analyst', analystName)
+  }, [analystName])
+
+  // Close on Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && open) onClose()
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [open, onClose])
 
   const totalCves = analysis.findings.reduce((s, f) => s + f.vuln.cves.length, 0)
 
-  function handleGenerate() {
+  const handleGenerate = useCallback(() => {
     setGenerating(true)
-    localStorage.setItem('report_client', clientName)
-    localStorage.setItem('report_analyst', analystName)
+    try {
+      const now = new Date()
+      const date = now.toLocaleDateString('pt-BR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
 
-    const now = new Date()
-    const date = now.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })
+      const html = generateReport({
+        client: { name: clientName.trim() || 'Não informado', analyst: analystName.trim() || 'Não informado', date },
+        scan,
+        analysis,
+        ssl: ssl ?? null,
+        threat: threat ?? null,
+        baseline: includeBaseline && baseline ? baseline : null,
+      })
 
-    const html = generateReport({
-      client: { name: clientName, analyst: analystName, date },
-      scan,
-      analysis,
-      ssl: ssl ?? null,
-      threat: threat ?? null,
-      baseline: includeBaseline && baseline ? baseline : null,
-    })
-
-    const win = window.open('', '_blank')
-    if (win) {
-      win.document.write(html)
-      win.document.close()
+      const win = window.open('', '_blank')
+      if (win) {
+        win.document.write(html)
+        win.document.close()
+        // Delay print so browser can fully render the HTML before printing
+        setTimeout(() => {
+          win.focus()
+          win.print()
+        }, 800)
+      }
+    } finally {
+      setGenerating(false)
     }
-
-    setGenerating(false)
-    onClose()
-  }
+  }, [clientName, analystName, scan, analysis, ssl, threat, baseline, includeBaseline])
 
   const checks: { icon: typeof Shield; label: string; color: string }[] = [
     { icon: Shield, label: `Score de segurança: ${analysis.score}/100`, color: '#00d4ff' },
@@ -63,21 +92,27 @@ export default function ReportModal({ open, onClose, scan, analysis, ssl, threat
     ...(totalCves > 0 ? [{ icon: CheckCircle2 as typeof Shield, label: `${totalCves} CVE${totalCves !== 1 ? 's' : ''} referenciado${totalCves !== 1 ? 's' : ''}`, color: '#ff8c00' }] : []),
     ...(ssl && !ssl.error ? [{ icon: Lock, label: `Certificado SSL — Nota ${ssl.grade}`, color: '#00d4ff' }] : []),
     ...(threat && !threat.error ? [{ icon: Globe, label: `Inteligência de ameaças (${(threat.listedCount ?? 0) > 0 ? threat.listedCount + ' blacklists' : 'limpo'})`, color: (threat.listedCount ?? 0) > 0 ? '#ff4d4d' : '#00ff88' }] : []),
+    ...(includeBaseline && baseline ? [{ icon: CheckCircle2 as typeof Shield, label: `Comparativo antes/depois (${baseline.date})`, color: '#00ff88' }] : []),
   ]
 
+  if (!open) return null
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+
       <div
-        className="w-full max-w-md bg-[#050a1a] border border-[#1a2744] rounded-2xl shadow-2xl"
+        className="relative z-10 w-full max-w-md bg-[#050a1a] border border-[#1a2744] rounded-2xl shadow-2xl overflow-hidden"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#1a2744]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#1a2744] bg-[#0a1128]">
           <div className="flex items-center gap-2">
-            <FileDown className="w-4 h-4 text-cyan-400" />
+            <FileDown className="w-4 h-4 text-[#00d4ff]" />
             <span className="font-bold text-white text-sm">Exportar Relatório PDF</span>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors">
+          <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors" aria-label="Fechar">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -88,16 +123,16 @@ export default function ReportModal({ open, onClose, scan, analysis, ssl, threat
             <div>
               <label className="text-xs text-gray-500 uppercase tracking-wider font-semibold block mb-1.5">Nome do Cliente</label>
               <input
-                className="dark-input"
+                className="dark-input w-full"
                 placeholder="Ex: Empresa XYZ Ltda."
                 value={clientName}
                 onChange={e => setClientName(e.target.value)}
               />
             </div>
             <div>
-              <label className="text-xs text-gray-500 uppercase tracking-wider font-semibold block mb-1.5">Analista Responsável</label>
+              <label className="text-xs text-gray-500 uppercase tracking-wider font-semibold block mb-1.5">Nome do Analista</label>
               <input
-                className="dark-input"
+                className="dark-input w-full"
                 placeholder="Ex: João Silva"
                 value={analystName}
                 onChange={e => setAnalystName(e.target.value)}
@@ -141,8 +176,8 @@ export default function ReportModal({ open, onClose, scan, analysis, ssl, threat
             </div>
           </div>
 
-          <p className="text-xs text-gray-600">
-            O relatório abrirá em uma nova aba. Use <strong className="text-gray-500">Ctrl+P</strong> (ou o diálogo de impressão automático) para salvar como PDF.
+          <p className="text-xs text-gray-600 text-center">
+            O relatório abrirá em uma nova aba e o diálogo de impressão abrirá automaticamente.
           </p>
         </div>
 
