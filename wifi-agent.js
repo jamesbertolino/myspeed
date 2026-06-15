@@ -409,21 +409,27 @@ function getArpHosts(targetSubnet) {
   return ips
 }
 
-function getLocalSubnet() {
+function getLocalSubnet(preferSubnet) {
   const os = require('os')
   const ifaces = os.networkInterfaces()
+  const candidates = []
   for (const name of Object.keys(ifaces)) {
     for (const iface of (ifaces[name] || [])) {
       if (iface.family === 'IPv4' && !iface.internal) {
         const parts = iface.address.split('.').map(Number)
         const [a, b] = parts
         if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) {
-          return { subnet: `${parts[0]}.${parts[1]}.${parts[2]}`, localIp: iface.address }
+          candidates.push({ subnet: `${parts[0]}.${parts[1]}.${parts[2]}`, localIp: iface.address })
         }
       }
     }
   }
-  return null
+  if (!candidates.length) return null
+  if (preferSubnet) {
+    const match = candidates.find(c => c.subnet === preferSubnet)
+    if (match) return match
+  }
+  return candidates[0]
 }
 
 async function discoverSubnet(subnet, arpHosts, onFound) {
@@ -467,8 +473,11 @@ async function handleDevices(req, res) {
 
   ndjson({ type: 'start' })
 
-  const subnetInfo = getLocalSubnet()
-  const targetSubnet = subnetInfo ? subnetInfo.subnet : null
+  // Respeita ?subnet= enviado pela UI (ex: 192.168.100)
+  const reqUrl = new URL(req.url, 'http://localhost')
+  const preferSubnet = reqUrl.searchParams.get('subnet') || undefined
+  const subnetInfo = getLocalSubnet(preferSubnet)
+  const targetSubnet = preferSubnet || (subnetInfo ? subnetInfo.subnet : null)
   const arpHosts = getArpHosts(targetSubnet)
 
   if (subnetInfo) {
