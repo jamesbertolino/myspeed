@@ -14,6 +14,22 @@ import ReportModal from '@/components/ReportModal'
 import type { RiskLevel, VulnInfo, ScanPort, ScanResult, SSLResult, ThreatResult, BaselineSnapshot } from '@/types/network'
 
 interface PingPoint { t: number; latency: number }
+
+interface PingTiming {
+  dns: number
+  tcp: number
+  tls: number
+  ttfb: number
+  total: number
+}
+
+interface NetInfo {
+  type?: string
+  effectiveType?: string
+  downlink?: number
+  rtt?: number
+}
+
 interface TraceHop {
   hop: number
   host: string
@@ -264,6 +280,8 @@ export default function NetworkPage() {
   const [pingCustom, setPingCustom] = useState('')
   const [pingStats, setPingStats] = useState({ min: 0, max: 0, avg: 0, sent: 0, lost: 0 })
   const [jitter, setJitter] = useState(0)
+  const [lastTiming, setLastTiming] = useState<PingTiming | null>(null)
+  const [netInfo, setNetInfo] = useState<NetInfo | null>(null)
   const pingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const pingHistory = useRef<number[]>([])
   const pingAllStats = useRef({ min: Infinity, max: 0, sum: 0, sent: 0, lost: 0 })
@@ -302,9 +320,10 @@ export default function NetworkPage() {
     const s = pingAllStats.current
     s.sent++
     const t0 = performance.now()
-    const url = pingCustom ? `https://${pingCustom}` : pingTarget
+    const base = pingCustom ? `https://${pingCustom}` : pingTarget
+    const fetchUrl = `${base}${base.includes('?') ? '&' : '?'}_t=${Date.now()}`
     try {
-      await fetch(url + `?_t=${Date.now()}`, { cache: 'no-store' })
+      await fetch(fetchUrl, { cache: 'no-store' })
       const lat = performance.now() - t0
       pingHistory.current = [...pingHistory.current.slice(-99), lat]
       setPingData(prev => [...prev.slice(-99), { t: Date.now(), latency: lat }])
@@ -314,6 +333,19 @@ export default function NetworkPage() {
       const avg = s.sum / (s.sent - s.lost)
       setPingStats({ min: s.min, max: s.max, avg, sent: s.sent, lost: s.lost })
       setJitter(calcJitter(pingHistory.current))
+
+      // Capture performance timing breakdown
+      const entries = performance.getEntriesByName(fetchUrl, 'resource') as PerformanceResourceTiming[]
+      const entry = entries[entries.length - 1]
+      if (entry && entry.responseEnd > 0 && entry.connectEnd > 0) {
+        setLastTiming({
+          dns: Math.max(0, entry.domainLookupEnd - entry.domainLookupStart),
+          tcp: Math.max(0, (entry.connectEnd - entry.connectStart) - (entry.secureConnectionStart > 0 ? entry.requestStart - entry.secureConnectionStart : 0)),
+          tls: entry.secureConnectionStart > 0 ? Math.max(0, entry.requestStart - entry.secureConnectionStart) : 0,
+          ttfb: Math.max(0, entry.responseStart - entry.requestStart),
+          total: Math.max(0, entry.responseEnd - entry.startTime),
+        })
+      }
     } catch {
       s.lost++
       setPingStats(prev => ({ ...prev, sent: s.sent, lost: s.lost }))
@@ -335,6 +367,18 @@ export default function NetworkPage() {
   }
 
   useEffect(() => () => { if (pingRef.current) clearInterval(pingRef.current) }, [])
+
+  // Network Information API
+  useEffect(() => {
+    type Conn = { type?: string; effectiveType?: string; downlink?: number; rtt?: number; onchange: (() => void) | null }
+    const nav = navigator as Navigator & { connection?: Conn; mozConnection?: Conn; webkitConnection?: Conn }
+    const conn = nav.connection ?? nav.mozConnection ?? nav.webkitConnection
+    if (!conn) return
+    const update = () => setNetInfo({ type: conn.type, effectiveType: conn.effectiveType, downlink: conn.downlink, rtt: conn.rtt })
+    update()
+    conn.onchange = update
+    return () => { conn.onchange = null }
+  }, [])
 
   // Load baseline from localStorage on mount
   useEffect(() => {
@@ -511,6 +555,15 @@ export default function NetworkPage() {
       {/* PING TAB */}
       {tab === 'ping' && (
         <div className="space-y-4">
+          {/* Origin banner */}
+          <div className="flex items-start gap-3 bg-green-500/5 border border-green-500/20 rounded-xl px-4 py-3 text-xs text-green-400">
+            <CheckCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold mb-0.5">Medição a partir do seu dispositivo local</p>
+              <p className="text-green-400/70">O teste parte do seu <strong>navegador → destino</strong>, não do servidor da aplicação. Reflete a qualidade real da sua conexão de internet, incluindo WiFi, roteador e ISP.</p>
+            </div>
+          </div>
+
           <div className="card p-4 flex flex-wrap items-end gap-4">
             <div className="flex-1 min-w-0">
               <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">Destino</label>
@@ -616,12 +669,100 @@ export default function NetworkPage() {
               ))}
             </div>
           </div>
+
+          {/* Latency breakdown panel */}
+          {lastTiming && lastTiming.total > 0 && (
+            <div className="card p-4">
+              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+                <Clock className="w-3.5 h-3.5 text-cyan-400" />
+                Breakdown de Latência (último ping)
+              </h3>
+              <div className="space-y-2.5">
+                {([
+                  { key: 'dns',  label: 'DNS',  value: lastTiming.dns,  desc: 'Resolução do nome para IP',           color: '#7b2fff' },
+                  { key: 'tcp',  label: 'TCP',  value: lastTiming.tcp,  desc: 'Abertura da conexão TCP',             color: '#00d4ff' },
+                  { key: 'tls',  label: 'TLS',  value: lastTiming.tls,  desc: 'Handshake SSL/TLS',                  color: '#ffd700' },
+                  { key: 'ttfb', label: 'TTFB', value: lastTiming.ttfb, desc: 'Tempo até 1º byte (processamento)',  color: '#00ff88' },
+                ] as const).map(row => {
+                  if (row.value < 0.1) return null
+                  const pct = Math.min(100, (row.value / lastTiming.total) * 100)
+                  return (
+                    <div key={row.key} className="flex items-center gap-3">
+                      <span className="w-9 text-xs mono font-semibold text-right shrink-0" style={{ color: row.color }}>{row.label}</span>
+                      <div className="flex-1 bg-[#0a1128] rounded-full h-3.5 overflow-hidden">
+                        <div className="h-3.5 rounded-full transition-all duration-500" style={{ width: `${pct}%`, background: row.color, opacity: 0.5 }} />
+                      </div>
+                      <span className="w-14 text-xs mono text-right shrink-0" style={{ color: latencyColor(row.value) }}>{row.value.toFixed(1)}ms</span>
+                      <span className="text-xs text-gray-600 hidden lg:block w-52 shrink-0">{row.desc}</span>
+                    </div>
+                  )
+                })}
+                <div className="flex items-center gap-3 pt-2 border-t border-[#1a2744]">
+                  <span className="w-9 text-xs mono font-semibold text-right shrink-0 text-white">Total</span>
+                  <div className="flex-1 bg-[#0a1128] rounded-full h-3.5 overflow-hidden">
+                    <div className="h-3.5 rounded-full bg-white/10" style={{ width: '100%' }} />
+                  </div>
+                  <span className="w-14 text-xs mono text-right shrink-0 text-white font-bold">{lastTiming.total.toFixed(1)}ms</span>
+                  <span className="text-xs text-gray-600 hidden lg:block w-52 shrink-0">RTT completo (browser → servidor)</span>
+                </div>
+              </div>
+              <p className="text-xs text-gray-700 mt-3">
+                DNS e TCP são cacheados após a primeira conexão — pings subsequentes mostram somente TTFB.
+                Valores 0ms indicam que o breakdown não está disponível para esse destino (requer <code className="text-gray-600">Timing-Allow-Origin</code>).
+              </p>
+            </div>
+          )}
+
+          {/* Network Info panel */}
+          {netInfo && (netInfo.type || netInfo.effectiveType || netInfo.downlink !== undefined || netInfo.rtt !== undefined) && (
+            <div className="card p-4">
+              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+                <Activity className="w-3.5 h-3.5 text-cyan-400" />
+                Informações da Conexão (reportado pelo SO)
+              </h3>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                {netInfo.type && (
+                  <div className="bg-[#0a1128] rounded-lg p-3">
+                    <p className="text-xs text-gray-600 mb-1">Tipo de Rede</p>
+                    <p className="text-sm font-semibold text-white capitalize">{netInfo.type}</p>
+                  </div>
+                )}
+                {netInfo.effectiveType && (
+                  <div className="bg-[#0a1128] rounded-lg p-3">
+                    <p className="text-xs text-gray-600 mb-1">Velocidade Efetiva</p>
+                    <p className="text-sm font-bold uppercase" style={{ color: netInfo.effectiveType === '4g' ? '#00ff88' : netInfo.effectiveType === '3g' ? '#ffd700' : '#ff4d4d' }}>
+                      {netInfo.effectiveType}
+                    </p>
+                  </div>
+                )}
+                {netInfo.downlink !== undefined && (
+                  <div className="bg-[#0a1128] rounded-lg p-3">
+                    <p className="text-xs text-gray-600 mb-1">Downlink Estimado</p>
+                    <p className="text-sm font-semibold text-white">{netInfo.downlink} <span className="text-xs text-gray-500">Mbps</span></p>
+                  </div>
+                )}
+                {netInfo.rtt !== undefined && (
+                  <div className="bg-[#0a1128] rounded-lg p-3">
+                    <p className="text-xs text-gray-600 mb-1">RTT (estimativa OS)</p>
+                    <p className="text-sm font-semibold mono" style={{ color: latencyColor(netInfo.rtt) }}>{netInfo.rtt}ms</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
       {/* TRACEROUTE TAB */}
       {tab === 'traceroute' && (
         <div className="space-y-4">
+          <div className="flex items-start gap-3 bg-yellow-500/5 border border-yellow-500/20 rounded-xl px-4 py-3 text-xs text-yellow-400">
+            <Server className="w-4 h-4 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold mb-0.5">Executado a partir do servidor da aplicação</p>
+              <p className="text-yellow-400/70">O traceroute parte do servidor na nuvem, não do seu dispositivo. Os saltos iniciais refletem a rota do servidor, não da sua rede local. Para diagnóstico local, use a aba <strong>Ping</strong> (executado do seu navegador).</p>
+            </div>
+          </div>
           <div className="card p-4 flex flex-wrap items-end gap-4">
             <div className="flex-1 min-w-0">
               <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">Destino</label>
@@ -705,6 +846,13 @@ export default function NetworkPage() {
       {/* DNS TAB */}
       {tab === 'dns' && (
         <div className="space-y-4">
+          <div className="flex items-start gap-3 bg-yellow-500/5 border border-yellow-500/20 rounded-xl px-4 py-3 text-xs text-yellow-400">
+            <Server className="w-4 h-4 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold mb-0.5">Consulta DNS executada pelo servidor da aplicação</p>
+              <p className="text-yellow-400/70">O resultado pode diferir do seu DNS local (o servidor usa seus próprios resolvers). Para verificar seu DNS, compare com ferramentas locais como <code className="text-yellow-300">nslookup</code> ou <code className="text-yellow-300">dig</code>.</p>
+            </div>
+          </div>
           <div className="card p-4 flex flex-wrap items-end gap-4">
             <div className="flex-1 min-w-0">
               <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">Domínio</label>
