@@ -433,7 +433,13 @@ function getLocalSubnet(preferSubnet) {
 }
 
 async function discoverSubnet(subnet, arpHosts, onFound) {
-  const PROBE_PORTS = [80, 443, 22, 8080, 8443, 21, 23, 3389]
+  // Portas comuns em dispositivos + roteadores (inclui 53, 8888, 7547 que roteadores usam)
+  const PROBE_PORTS = [80, 443, 22, 8080, 8443, 21, 23, 3389, 53, 8888, 7547, 8181, 8000]
+  const gateway = `${subnet}.1`
+
+  // Sempre inclui o gateway, independente de responder TCP
+  if (!arpHosts.has(gateway)) arpHosts.set(gateway, null)
+
   const allIps = []
   for (let i = 1; i <= 254; i++) allIps.push(`${subnet}.${i}`)
 

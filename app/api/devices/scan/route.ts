@@ -136,7 +136,7 @@ function getLocalSubnet(preferSubnet?: string): { subnet: string; localIp: strin
 }
 
 async function isHostOnline(ip: string): Promise<boolean> {
-  const PROBE_PORTS = [80, 443, 22, 8080, 8443, 21, 23, 3389, 53, 139, 445, 3306, 5900]
+  const PROBE_PORTS = [80, 443, 22, 8080, 8443, 21, 23, 3389, 53, 139, 445, 3306, 5900, 8888, 7547, 8181, 8000]
   for (const port of PROBE_PORTS) {
     if (await tcpProbe(ip, port, 500)) return true
   }
@@ -152,6 +152,10 @@ async function discoverSubnet(
   arpHosts: Map<string, string | null>,
   onFound: (ip: string) => void
 ): Promise<void> {
+  // Sempre inclui o gateway
+  const gateway = `${subnet}.1`
+  if (!arpHosts.has(gateway)) arpHosts.set(gateway, null)
+
   const allIps: string[] = []
   for (let i = 1; i <= 254; i++) allIps.push(`${subnet}.${i}`)
 
