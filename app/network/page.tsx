@@ -46,6 +46,31 @@ interface ScanResult {
   scanned: number
 }
 
+interface SSLResult {
+  host: string
+  daysUntilExpiry: number
+  expired: boolean
+  selfSigned: boolean
+  protocol: string
+  grade: 'A+' | 'A' | 'B' | 'C' | 'F'
+  issuer: Record<string, string>
+  issues: Array<{ severity: string; message: string }>
+  cipher: { name: string }
+  error?: string
+}
+
+interface ThreatResult {
+  ip: string
+  ipInfo?: { country: string; org: string; city: string; region: string }
+  isTor?: boolean
+  listedCount?: number
+  riskScore?: number
+  riskLevel?: string
+  dnsbl?: Array<{ name: string; listed: boolean; description: string }>
+  flags?: string[]
+  error?: string
+}
+
 type RiskLevel = 'critical' | 'high' | 'medium' | 'low' | 'info'
 
 interface VulnInfo {
@@ -307,6 +332,12 @@ export default function NetworkPage() {
   const [scanProgress, setScanProgress] = useState(0)
   const [expandedPort, setExpandedPort] = useState<number | null>(null)
 
+  // Auto-fetched enrichment after scan
+  const [sslResult, setSslResult] = useState<SSLResult | null>(null)
+  const [sslLoading, setSslLoading] = useState(false)
+  const [threatResult, setThreatResult] = useState<ThreatResult | null>(null)
+  const [threatLoading, setThreatLoading] = useState(false)
+
   const doPing = useCallback(async () => {
     const s = pingAllStats.current
     s.sent++
@@ -345,6 +376,34 @@ export default function NetworkPage() {
 
   useEffect(() => () => { if (pingRef.current) clearInterval(pingRef.current) }, [])
 
+  // Auto-enrich scan results with SSL + threat intelligence
+  useEffect(() => {
+    if (!scanResult) { setSslResult(null); setThreatResult(null); return }
+
+    const hasHttps = scanResult.open.some(p => p.port === 443 || p.port === 8443)
+    if (hasHttps) {
+      setSslLoading(true)
+      setSslResult(null)
+      fetch(`/api/ssl?host=${encodeURIComponent(scanResult.host)}`)
+        .then(r => r.json())
+        .then(setSslResult)
+        .catch(() => {})
+        .finally(() => setSslLoading(false))
+    }
+
+    const isPublic = (ip: string) =>
+      !/^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|::1|fc|fd)/.test(ip)
+    if (scanResult.ip && isPublic(scanResult.ip)) {
+      setThreatLoading(true)
+      setThreatResult(null)
+      fetch(`/api/threat?ip=${encodeURIComponent(scanResult.ip)}`)
+        .then(r => r.json())
+        .then(setThreatResult)
+        .catch(() => {})
+        .finally(() => setThreatLoading(false))
+    }
+  }, [scanResult])
+
   const runTraceroute = async () => {
     setTraceLoading(true)
     setTraceHops([])
@@ -378,6 +437,8 @@ export default function NetworkPage() {
     setScanError(null)
     setScanProgress(0)
     setExpandedPort(null)
+    setSslResult(null)
+    setThreatResult(null)
 
     const start = Date.now()
     const expectedMs = 5000
@@ -968,6 +1029,128 @@ export default function NetworkPage() {
                   </div>
                 </div>
               </div>
+
+              {/* SSL Certificate */}
+              {(sslLoading || sslResult) && (
+                <div className="card p-5">
+                  <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+                    <Lock className="w-3.5 h-3.5 text-cyan-400" />
+                    Certificado SSL/TLS
+                    {sslLoading && <Loader2 className="w-3.5 h-3.5 animate-spin ml-1" />}
+                  </h2>
+                  {sslResult && (
+                    sslResult.error ? (
+                      <p className="text-xs text-red-400">{sslResult.error}</p>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="flex flex-wrap items-center gap-4">
+                          <div className="text-center shrink-0">
+                            <div className={clsx('text-4xl font-black mono', {
+                              'text-[#00ff88]': sslResult.grade === 'A+' || sslResult.grade === 'A',
+                              'text-[#ffd700]': sslResult.grade === 'B',
+                              'text-[#ff8c00]': sslResult.grade === 'C',
+                              'text-[#ff4d4d]': sslResult.grade === 'F',
+                            })}>
+                              {sslResult.grade}
+                            </div>
+                            <p className="text-xs text-gray-500">Nota TLS</p>
+                          </div>
+                          <div className="flex-1 min-w-0 space-y-1.5 text-xs">
+                            <div className="flex gap-2">
+                              <span className="text-gray-500 w-20 shrink-0">Protocolo:</span>
+                              <span className="text-white mono">{sslResult.protocol}</span>
+                            </div>
+                            <div className="flex gap-2">
+                              <span className="text-gray-500 w-20 shrink-0">Expira em:</span>
+                              <span className={clsx('mono font-semibold', sslResult.expired ? 'text-[#ff4d4d]' : sslResult.daysUntilExpiry < 30 ? 'text-[#ffd700]' : 'text-[#00ff88]')}>
+                                {sslResult.expired ? 'EXPIRADO' : `${sslResult.daysUntilExpiry} dias`}
+                              </span>
+                            </div>
+                            <div className="flex gap-2">
+                              <span className="text-gray-500 w-20 shrink-0">Emissor:</span>
+                              <span className="text-white truncate">{sslResult.issuer?.O ?? sslResult.issuer?.CN ?? '—'}</span>
+                            </div>
+                            <div className="flex gap-2">
+                              <span className="text-gray-500 w-20 shrink-0">Cipher:</span>
+                              <span className="text-gray-400 mono truncate">{sslResult.cipher?.name}</span>
+                            </div>
+                          </div>
+                        </div>
+                        {sslResult.issues?.length > 0 && (
+                          <div className="space-y-1.5 pt-2 border-t border-[#1a2744]">
+                            {sslResult.issues.map((iss, i) => {
+                              const col = iss.severity === 'critical' ? '#ff4d4d' : iss.severity === 'high' ? '#ff8c00' : iss.severity === 'medium' ? '#ffd700' : '#00d4ff'
+                              return (
+                                <div key={i} className="flex items-start gap-2 text-xs">
+                                  <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" style={{ color: col }} />
+                                  <span className="text-gray-300">{iss.message}</span>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  )}
+                </div>
+              )}
+
+              {/* Threat Intelligence */}
+              {(threatLoading || threatResult) && (
+                <div className="card p-5">
+                  <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+                    <ShieldAlert className="w-3.5 h-3.5 text-orange-400" />
+                    Inteligência de Ameaças
+                    {threatLoading && <Loader2 className="w-3.5 h-3.5 animate-spin ml-1" />}
+                  </h2>
+                  {threatResult && !threatResult.error && (
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap items-start gap-4">
+                        {threatResult.ipInfo && (
+                          <div className="text-xs space-y-1">
+                            <p><span className="text-gray-500">IP:</span> <span className="text-white mono">{threatResult.ip}</span></p>
+                            <p><span className="text-gray-500">Localização:</span> <span className="text-white">{[threatResult.ipInfo.city, threatResult.ipInfo.country].filter(Boolean).join(', ')}</span></p>
+                            <p><span className="text-gray-500">Provedor:</span> <span className="text-white">{threatResult.ipInfo.org}</span></p>
+                          </div>
+                        )}
+                        <div className="flex flex-wrap gap-2">
+                          {threatResult.isTor && <span className="tag tag-red">Nó Tor</span>}
+                          {(threatResult.listedCount ?? 0) > 0 && (
+                            <span className="tag tag-red">DNSBL: {threatResult.listedCount} listas</span>
+                          )}
+                          {threatResult.riskLevel && (
+                            <span className="tag" style={{
+                              background: RISK_CONFIG[threatResult.riskLevel as RiskLevel]?.bg ?? 'rgba(74,85,104,0.1)',
+                              color: RISK_CONFIG[threatResult.riskLevel as RiskLevel]?.color ?? '#4a5568',
+                              border: `1px solid ${RISK_CONFIG[threatResult.riskLevel as RiskLevel]?.border ?? 'rgba(74,85,104,0.3)'}`,
+                            }}>
+                              Risco: {RISK_CONFIG[threatResult.riskLevel as RiskLevel]?.label ?? threatResult.riskLevel}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {(threatResult.dnsbl ?? []).some(d => d.listed) && (
+                        <div className="space-y-1 pt-2 border-t border-[#1a2744]">
+                          <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Listas negras com ocorrência:</p>
+                          {(threatResult.dnsbl ?? []).filter(d => d.listed).map(d => (
+                            <div key={d.name} className="flex items-center gap-2 text-xs">
+                              <span className="w-1.5 h-1.5 rounded-full bg-[#ff4d4d] shrink-0" />
+                              <span className="text-red-300 font-semibold">{d.name}</span>
+                              <span className="text-gray-500">{d.description}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {(threatResult.listedCount === 0 && !threatResult.isTor) && (
+                        <div className="flex items-center gap-2 text-xs text-[#00ff88]">
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                          IP não encontrado em listas negras conhecidas
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Findings */}
               <div className="space-y-3">
