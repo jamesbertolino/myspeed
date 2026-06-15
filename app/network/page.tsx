@@ -558,7 +558,7 @@ export default function NetworkPage() {
           </div>
 
           <div className="card p-5">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex flex-wrap items-start justify-between gap-2 mb-4">
               <div>
                 <h3 className="text-sm font-semibold text-white">Latência em Tempo Real</h3>
                 <div className="flex items-center gap-3 mt-1 flex-wrap">
@@ -735,7 +735,7 @@ export default function NetworkPage() {
 
           {dnsResult && (
             <div className="card p-5">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex flex-wrap items-start justify-between gap-2 mb-4">
                 <div>
                   <h3 className="text-sm font-semibold text-white">{dnsResult.domain}</h3>
                   <div className="flex items-center gap-2 mt-1">
@@ -763,7 +763,7 @@ export default function NetworkPage() {
                         <div key={t}>
                           <p className="text-xs text-gray-500 uppercase tracking-wider mb-1.5">{t} Records</p>
                           {records.map((r, i) => (
-                            <div key={i} className="bg-[#050a1a] rounded-lg px-4 py-2 mono text-xs text-gray-300 mb-1">
+                            <div key={i} className="bg-[#050a1a] rounded-lg px-4 py-2 mono text-xs text-gray-300 mb-1 overflow-x-auto">
                               {typeof r === 'object' ? JSON.stringify(r) : String(r)}
                             </div>
                           ))}
@@ -772,7 +772,7 @@ export default function NetworkPage() {
                     })
                   ) : (
                     (dnsResult.records || []).map((r, i) => (
-                      <div key={i} className="bg-[#050a1a] rounded-lg px-4 py-2.5 mono text-sm text-[#00d4ff] border border-[#1a2744]">
+                      <div key={i} className="bg-[#050a1a] rounded-lg px-4 py-2.5 mono text-sm text-[#00d4ff] border border-[#1a2744] overflow-x-auto">
                         {typeof r === 'object' ? JSON.stringify(r, null, 2) : String(r)}
                       </div>
                     ))
@@ -822,9 +822,9 @@ export default function NetworkPage() {
           {scanLoading && (
             <div className="card p-4">
               <div className="flex items-center justify-between text-xs text-gray-400 mb-2">
-                <span className="flex items-center gap-2">
-                  <Radar className="w-3.5 h-3.5 animate-spin text-cyan-400" />
-                  Testando 30 portas em paralelo...
+                <span className="flex items-center gap-2 flex-1 min-w-0">
+                  <Radar className="w-3.5 h-3.5 animate-spin text-cyan-400 shrink-0" />
+                  <span className="truncate">Testando 30 portas em paralelo...</span>
                 </span>
                 <span className="mono text-cyan-400">{Math.round(scanProgress)}%</span>
               </div>
@@ -849,34 +849,36 @@ export default function NetworkPage() {
           {scanResult && !scanLoading && (
             <div className="space-y-3">
               {/* Summary */}
-              <div className="card p-4 flex flex-wrap items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <Server className="w-4 h-4 text-cyan-400" />
-                  <div>
-                    <p className="text-sm font-semibold text-white">{scanResult.host}</p>
-                    {scanResult.ip !== scanResult.host && (
-                      <p className="text-xs text-gray-500 mono">{scanResult.ip}</p>
-                    )}
+              <div className="card p-4 space-y-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <Server className="w-4 h-4 text-cyan-400 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-white truncate">{scanResult.host}</p>
+                      {scanResult.ip !== scanResult.host && (
+                        <p className="text-xs text-gray-500 mono">{scanResult.ip}</p>
+                      )}
+                    </div>
                   </div>
-                </div>
-                <div className="flex gap-4 ml-auto">
-                  <div className="text-center">
-                    <p className="text-2xl font-black mono text-[#00ff88]">{scanResult.open.length}</p>
-                    <p className="text-xs text-gray-500">abertas</p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-2xl font-black mono text-gray-600">{scanResult.total - scanResult.open.length}</p>
-                    <p className="text-xs text-gray-500">fechadas</p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-2xl font-black mono text-gray-400">{scanResult.total}</p>
-                    <p className="text-xs text-gray-500">total</p>
+                  <div className="flex gap-4 shrink-0">
+                    <div className="text-center">
+                      <p className="text-2xl font-black mono text-[#00ff88]">{scanResult.open.length}</p>
+                      <p className="text-xs text-gray-500">abertas</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-2xl font-black mono text-gray-600">{scanResult.total - scanResult.open.length}</p>
+                      <p className="text-xs text-gray-500">fechadas</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-2xl font-black mono text-gray-400">{scanResult.total}</p>
+                      <p className="text-xs text-gray-500">total</p>
+                    </div>
                   </div>
                 </div>
                 {scanResult.open.length > 0 && (
                   <button
                     onClick={() => setTab('security')}
-                    className="ml-auto btn-purple px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 shrink-0"
+                    className="w-full btn-purple py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5"
                   >
                     <Shield className="w-3.5 h-3.5" />
                     Ver Análise de Segurança
@@ -1110,7 +1112,7 @@ export default function NetworkPage() {
                           <div className="text-xs space-y-1">
                             <p><span className="text-gray-500">IP:</span> <span className="text-white mono">{threatResult.ip}</span></p>
                             <p><span className="text-gray-500">Localização:</span> <span className="text-white">{[threatResult.ipInfo.city, threatResult.ipInfo.country].filter(Boolean).join(', ')}</span></p>
-                            <p><span className="text-gray-500">Provedor:</span> <span className="text-white">{threatResult.ipInfo.org}</span></p>
+                            <p><span className="text-gray-500">Provedor:</span> <span className="text-white break-all">{threatResult.ipInfo.org}</span></p>
                           </div>
                         )}
                         <div className="flex flex-wrap gap-2">
@@ -1177,7 +1179,7 @@ export default function NetworkPage() {
                                   <span className="font-bold text-white">{f.service}</span>
                                   <span className="mono text-xs px-2 py-0.5 rounded" style={{ background: '#0a1128', color: '#00d4ff' }}>:{f.port}</span>
                                 </div>
-                                <span className="tag text-xs font-bold ml-auto" style={{ background: rc.bg, color: rc.color, border: `1px solid ${rc.border}` }}>
+                                <span className="tag text-xs font-bold" style={{ background: rc.bg, color: rc.color, border: `1px solid ${rc.border}` }}>
                                   {rc.label}
                                 </span>
                               </div>
