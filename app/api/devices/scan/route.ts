@@ -70,6 +70,11 @@ function deviceRiskLevel(openPorts: PortDef[]): string {
   return 'low'
 }
 
+function isPrivateIp(ip: string): boolean {
+  const [a, b] = ip.split('.').map(Number)
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+}
+
 function getArpHosts(): Map<string, string | null> {
   const ips = new Map<string, string | null>()
   try {
@@ -78,26 +83,26 @@ function getArpHosts(): Map<string, string | null> {
       out = execSync('arp -a', { encoding: 'utf8', timeout: 5000 })
       for (const line of out.split('\n')) {
         const m = line.match(/\s+([\d.]+)\s+([\da-f]{2}[-][\da-f]{2}[-][\da-f]{2}[-][\da-f]{2}[-][\da-f]{2}[-][\da-f]{2})\s+/i)
-        if (m) ips.set(m[1], m[2].replace(/-/g, ':').toLowerCase())
+        if (m && isPrivateIp(m[1])) ips.set(m[1], m[2].replace(/-/g, ':').toLowerCase())
       }
     } else if (process.platform === 'darwin') {
       out = execSync('arp -a 2>/dev/null', { encoding: 'utf8', timeout: 5000 })
       for (const line of out.split('\n')) {
         const m = line.match(/\(([^)]+)\)\s+at\s+([\da-f:]{17})/i)
-        if (m && m[2] !== 'ff:ff:ff:ff:ff:ff') ips.set(m[1], m[2].toLowerCase())
+        if (m && m[2] !== 'ff:ff:ff:ff:ff:ff' && isPrivateIp(m[1])) ips.set(m[1], m[2].toLowerCase())
       }
     } else {
       try {
         out = execSync('ip neigh show 2>/dev/null', { encoding: 'utf8', timeout: 5000 })
         for (const line of out.split('\n')) {
           const m = line.match(/^([\d.]+)\s+\S+\s+\S+\s+([\da-f:]{17})/i)
-          if (m) ips.set(m[1], m[2].toLowerCase())
+          if (m && isPrivateIp(m[1])) ips.set(m[1], m[2].toLowerCase())
         }
       } catch {
         out = execSync('arp -n 2>/dev/null || true', { encoding: 'utf8', timeout: 5000 })
         for (const line of out.split('\n').slice(1)) {
           const p = line.trim().split(/\s+/)
-          if (p.length >= 3 && p[2] && p[2].includes(':') && p[2] !== '(incomplete)') {
+          if (p.length >= 3 && p[2] && p[2].includes(':') && p[2] !== '(incomplete)' && isPrivateIp(p[0])) {
             ips.set(p[0], p[2].toLowerCase())
           }
         }
@@ -138,6 +143,10 @@ async function isHostOnline(ip: string): Promise<boolean> {
   return false
 }
 
+function ipMatchesSubnet(ip: string, subnet: string): boolean {
+  return ip.startsWith(subnet + '.')
+}
+
 async function discoverSubnet(
   subnet: string,
   arpHosts: Map<string, string | null>,
@@ -147,6 +156,7 @@ async function discoverSubnet(
   for (let i = 1; i <= 254; i++) allIps.push(`${subnet}.${i}`)
 
   await parallelBatch(allIps, async (ip) => {
+    if (!ipMatchesSubnet(ip, subnet)) return
     if (await isHostOnline(ip)) onFound(ip)
   }, 30)
 }
@@ -183,11 +193,16 @@ export async function GET(req: NextRequest) {
       // Discover all online hosts via TCP probe on the selected subnet only
       const onlineHosts = new Map<string, string | null>()
       if (subnetInfo) {
-        send({ type: 'progress', message: `Varrendo ${subnetInfo.subnet}.0/24 (apenas online)...` })
-        await discoverSubnet(subnetInfo.subnet, new Map(), (ip) => {
-          // Only accept IPs that belong to this /24 subnet (not broadcast)
+        const targetSubnet = subnetInfo.subnet
+        send({ type: 'progress', message: `Varrendo ${targetSubnet}.0/24 (apenas online)...` })
+        await discoverSubnet(targetSubnet, new Map(), (ip) => {
+          // Strict subnet match — reject any IP outside the /24
+          if (!ipMatchesSubnet(ip, targetSubnet)) return
           const last = parseInt(ip.split('.')[3])
           if (last === 0 || last === 255) return
+          // Reject multicast, broadcast and non-private ranges
+          const first = parseInt(ip.split('.')[0])
+          if (first >= 224) return
           onlineHosts.set(ip, arpHosts.get(ip) ?? null)
         })
       }
