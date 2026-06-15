@@ -164,7 +164,7 @@ export default function NetworkPage() {
         <div className="space-y-4">
           {/* Controls */}
           <div className="card p-4 flex flex-wrap items-end gap-4">
-            <div>
+            <div className="flex-1 min-w-0">
               <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">Destino</label>
               <select
                 value={pingCustom ? 'custom' : pingTarget}
@@ -172,17 +172,17 @@ export default function NetworkPage() {
                   if (e.target.value === 'custom') { setPingCustom(''); }
                   else { setPingCustom(''); setPingTarget(e.target.value) }
                 }}
-                className="bg-[#050a1a] border border-[#1a2744] text-gray-300 text-sm rounded-lg px-3 py-2 outline-none min-w-48"
+                className="bg-[#050a1a] border border-[#1a2744] text-gray-300 text-sm rounded-lg px-3 py-2 outline-none w-full"
               >
                 {PING_PRESETS.map(p => <option key={p.url} value={p.url}>{p.label}</option>)}
                 <option value="custom">Personalizado...</option>
               </select>
             </div>
             {(pingTarget === 'custom' || pingCustom) && (
-              <div>
+              <div className="flex-1 min-w-0">
                 <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">Host</label>
                 <input
-                  className="dark-input w-48"
+                  className="dark-input"
                   placeholder="ex: example.com"
                   value={pingCustom}
                   onChange={e => setPingCustom(e.target.value)}
@@ -218,7 +218,7 @@ export default function NetworkPage() {
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="text-sm font-semibold text-white">Latência em Tempo Real</h3>
-                <div className="flex items-center gap-3 mt-1">
+                <div className="flex items-center gap-3 mt-1 flex-wrap">
                   {lastLatency && (
                     <span className={clsx('tag', lastLatency <= 50 ? 'tag-cyan' : lastLatency <= 100 ? 'tag-yellow' : 'tag-red')}>
                       {latencyLabel(lastLatency)}
