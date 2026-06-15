@@ -273,6 +273,11 @@ function analyzeResults(result: ScanResult) {
 export default function NetworkPage() {
   const [tab, setTab] = useState<'ping' | 'traceroute' | 'dns' | 'scanner' | 'security'>('ping')
 
+  // Local agent detection
+  const AGENT_URL = 'http://localhost:3777'
+  const [agentStatus, setAgentStatus] = useState<'detecting' | 'connected' | 'disconnected'>('detecting')
+  const [agentInfo, setAgentInfo] = useState<{ hostname?: string; platform?: string } | null>(null)
+
   // Ping state
   const [pingData, setPingData] = useState<PingPoint[]>([])
   const [pingRunning, setPingRunning] = useState(false)
@@ -368,6 +373,34 @@ export default function NetworkPage() {
 
   useEffect(() => () => { if (pingRef.current) clearInterval(pingRef.current) }, [])
 
+  // Detect local agent on mount and every 10s
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval>
+    async function detect() {
+      try {
+        const res = await fetch(`${AGENT_URL}/health`, { signal: AbortSignal.timeout(1500) })
+        if (res.ok) {
+          const data = await res.json() as { hostname?: string; platform?: string }
+          setAgentStatus('connected')
+          setAgentInfo(data)
+          return
+        }
+      } catch { /* not running */ }
+      setAgentStatus('disconnected')
+      setAgentInfo(null)
+    }
+    detect()
+    interval = setInterval(detect, 10_000)
+    return () => clearInterval(interval)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // API URL helper — prefers agent for server-side tools when connected
+  const apiUrl = useCallback((cloudPath: string, agentPath: string, params: Record<string, string>) => {
+    const qs = new URLSearchParams(params).toString()
+    if (agentStatus === 'connected') return `${AGENT_URL}${agentPath}${qs ? '?' + qs : ''}`
+    return `${cloudPath}${qs ? '?' + qs : ''}`
+  }, [agentStatus]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Network Information API
   useEffect(() => {
     type Conn = { type?: string; effectiveType?: string; downlink?: number; rtt?: number; onchange: (() => void) | null }
@@ -432,7 +465,8 @@ export default function NetworkPage() {
     setTraceLoading(true)
     setTraceHops([])
     try {
-      const res = await fetch(`/api/traceroute?target=${encodeURIComponent(traceTarget)}`)
+      const url = apiUrl('/api/traceroute', '/traceroute', { target: traceTarget })
+      const res = await fetch(url)
       const data = await res.json()
       setTraceHops(data.hops || [])
       setTraceSimulated(data.simulated || false)
@@ -447,7 +481,8 @@ export default function NetworkPage() {
     setDnsLoading(true)
     setDnsResult(null)
     try {
-      const res = await fetch(`/api/dns?domain=${encodeURIComponent(dnsDomain)}&type=${dnsType}`)
+      const url = apiUrl('/api/dns', '/dns', { domain: dnsDomain, type: dnsType })
+      const res = await fetch(url)
       setDnsResult(await res.json())
     } finally {
       setDnsLoading(false)
@@ -473,10 +508,10 @@ export default function NetworkPage() {
     }, 200)
 
     try {
-      const portsParam = scanMode === 'custom' && customPorts.trim()
-        ? `&ports=${encodeURIComponent(customPorts.trim())}`
-        : ''
-      const res = await fetch(`/api/portscan?host=${encodeURIComponent(scanTarget.trim())}${portsParam}`)
+      const params: Record<string, string> = { host: scanTarget.trim() }
+      if (scanMode === 'custom' && customPorts.trim()) params.ports = customPorts.trim()
+      const url = apiUrl('/api/portscan', '/portscan', params)
+      const res = await fetch(url)
       const data = await res.json()
       clearInterval(ticker)
       setScanProgress(100)
@@ -524,10 +559,33 @@ export default function NetworkPage() {
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
-      <div className="mb-6">
+      <div className="mb-4">
         <h1 className="text-xl md:text-2xl font-bold text-white">Análise de Rede</h1>
         <p className="text-sm text-gray-500 mt-1">Ping, Jitter, Traceroute, DNS e Scanner de Portas</p>
       </div>
+
+      {/* Agent status banner */}
+      {agentStatus === 'connected' ? (
+        <div className="flex items-center gap-3 mb-4 bg-green-500/5 border border-green-500/25 rounded-xl px-4 py-2.5 text-xs">
+          <span className="w-2 h-2 rounded-full bg-green-400 shrink-0 animate-pulse" />
+          <div className="flex-1 min-w-0">
+            <span className="text-green-400 font-semibold">Agente Local Conectado</span>
+            <span className="text-green-400/60 ml-2">{agentInfo?.hostname} ({agentInfo?.platform})</span>
+            <span className="text-green-400/50 ml-2">— todos os testes originam do seu dispositivo, incluindo IPs internos</span>
+          </div>
+        </div>
+      ) : agentStatus === 'disconnected' ? (
+        <div className="flex items-start gap-3 mb-4 bg-[#0a1128] border border-[#1a2744] rounded-xl px-4 py-2.5 text-xs">
+          <span className="w-2 h-2 rounded-full bg-gray-600 shrink-0 mt-1" />
+          <div className="flex-1 min-w-0">
+            <span className="text-gray-400">Agente local não detectado</span>
+            <span className="text-gray-600 ml-2">— traceroute, DNS e port scan originam do servidor cloud</span>
+            <span className="text-gray-600 block mt-0.5">
+              Para testes locais: <code className="text-gray-500">node scripts/local-agent.js</code>
+            </span>
+          </div>
+        </div>
+      ) : null}
 
       {/* Tab Nav */}
       <div className="flex gap-1 mb-6 bg-[#0a1128] rounded-xl p-1 border border-[#1a2744] w-full overflow-x-auto">
@@ -756,13 +814,23 @@ export default function NetworkPage() {
       {/* TRACEROUTE TAB */}
       {tab === 'traceroute' && (
         <div className="space-y-4">
-          <div className="flex items-start gap-3 bg-yellow-500/5 border border-yellow-500/20 rounded-xl px-4 py-3 text-xs text-yellow-400">
-            <Server className="w-4 h-4 shrink-0 mt-0.5" />
-            <div>
-              <p className="font-semibold mb-0.5">Executado a partir do servidor da aplicação</p>
-              <p className="text-yellow-400/70">O traceroute parte do servidor na nuvem, não do seu dispositivo. Os saltos iniciais refletem a rota do servidor, não da sua rede local. Para diagnóstico local, use a aba <strong>Ping</strong> (executado do seu navegador).</p>
+          {agentStatus === 'connected' ? (
+            <div className="flex items-start gap-3 bg-green-500/5 border border-green-500/25 rounded-xl px-4 py-3 text-xs text-green-400">
+              <CheckCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold mb-0.5">Agente Local — traceroute a partir do seu dispositivo</p>
+                <p className="text-green-400/70">Os saltos refletem a rota real da sua conexão: seu roteador, ISP, e caminho até o destino.</p>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex items-start gap-3 bg-yellow-500/5 border border-yellow-500/20 rounded-xl px-4 py-3 text-xs text-yellow-400">
+              <Server className="w-4 h-4 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold mb-0.5">Executado a partir do servidor cloud</p>
+                <p className="text-yellow-400/70">Não reflete a sua rota de rede. Rode <code className="text-yellow-300">node scripts/local-agent.js</code> para obter o traceroute real do seu dispositivo.</p>
+              </div>
+            </div>
+          )}
           <div className="card p-4 flex flex-wrap items-end gap-4">
             <div className="flex-1 min-w-0">
               <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">Destino</label>
@@ -846,13 +914,23 @@ export default function NetworkPage() {
       {/* DNS TAB */}
       {tab === 'dns' && (
         <div className="space-y-4">
-          <div className="flex items-start gap-3 bg-yellow-500/5 border border-yellow-500/20 rounded-xl px-4 py-3 text-xs text-yellow-400">
-            <Server className="w-4 h-4 shrink-0 mt-0.5" />
-            <div>
-              <p className="font-semibold mb-0.5">Consulta DNS executada pelo servidor da aplicação</p>
-              <p className="text-yellow-400/70">O resultado pode diferir do seu DNS local (o servidor usa seus próprios resolvers). Para verificar seu DNS, compare com ferramentas locais como <code className="text-yellow-300">nslookup</code> ou <code className="text-yellow-300">dig</code>.</p>
+          {agentStatus === 'connected' ? (
+            <div className="flex items-start gap-3 bg-green-500/5 border border-green-500/25 rounded-xl px-4 py-3 text-xs text-green-400">
+              <CheckCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold mb-0.5">Agente Local — usando seu resolver DNS local</p>
+                <p className="text-green-400/70">Resultados refletem o que o seu sistema operacional resolve — mostrando o DNS do seu roteador ou provedor.</p>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex items-start gap-3 bg-yellow-500/5 border border-yellow-500/20 rounded-xl px-4 py-3 text-xs text-yellow-400">
+              <Server className="w-4 h-4 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold mb-0.5">Consulta DNS pelo servidor cloud</p>
+                <p className="text-yellow-400/70">Pode diferir do que o seu sistema resolve. Para ver seu DNS local: <code className="text-yellow-300">node scripts/local-agent.js</code>.</p>
+              </div>
+            </div>
+          )}
           <div className="card p-4 flex flex-wrap items-end gap-4">
             <div className="flex-1 min-w-0">
               <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">Domínio</label>
@@ -939,13 +1017,28 @@ export default function NetworkPage() {
       {tab === 'scanner' && (
         <div className="space-y-4">
           {/* Info banner */}
-          <div className="flex items-start gap-3 bg-cyan-500/5 border border-cyan-500/20 rounded-xl px-4 py-3 text-xs text-cyan-300">
-            <Terminal className="w-4 h-4 shrink-0 mt-0.5" />
-            <div>
-              <p className="font-semibold mb-0.5">Scanner TCP de Portas</p>
-              <p className="text-cyan-400/70">Scan via conexão TCP a partir do servidor — funciona apenas para hosts com acesso à internet. Redes locais (192.168.x.x) não são acessíveis a partir deste servidor.</p>
+          {agentStatus === 'connected' ? (
+            <div className="flex items-start gap-3 bg-green-500/5 border border-green-500/25 rounded-xl px-4 py-3 text-xs text-green-400">
+              <CheckCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold mb-0.5">Agente Local — scan TCP a partir do seu dispositivo</p>
+                <p className="text-green-400/70">
+                  Alcança IPs internos da sua rede (<code className="text-green-300">192.168.x.x</code>, <code className="text-green-300">10.x.x.x</code>), roteadores, switches e outros dispositivos locais — impossível via servidor cloud.
+                </p>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex items-start gap-3 bg-cyan-500/5 border border-cyan-500/20 rounded-xl px-4 py-3 text-xs text-cyan-300">
+              <Terminal className="w-4 h-4 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold mb-0.5">Scanner TCP de Portas (servidor cloud)</p>
+                <p className="text-cyan-400/70">
+                  Funciona apenas para hosts com acesso à internet. IPs internos (<code className="text-cyan-300">192.168.x.x</code>) são inacessíveis do servidor cloud.
+                  Use <code className="text-cyan-300">node scripts/local-agent.js</code> para escanear sua rede local.
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Controls */}
           <div className="card p-4 space-y-3">
