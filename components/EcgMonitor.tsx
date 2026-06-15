@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { loadSettings } from '@/lib/settings'
 
-const BASE_BPM  = 72
-const SCROLL_PX = 2
+const BASE_BPM  = 20   // 1 batimento a cada 3s — beep a cada ~3s
+const SCROLL_PX = 1    // varredura lenta
 
 function ecgValue(t: number): number {
   if (t < 0.08) return 0
@@ -144,8 +144,8 @@ export default function EcgMonitor() {
 
       if (elapsed >= cycleMs) {
         cycleStartRef.current = now
-        const raw  = BASE_BPM + ((Math.random() * 16 - 8) | 0)
-        const next = Math.max(55, Math.min(85, raw))
+        const raw  = BASE_BPM + ((Math.random() * 2 - 1) | 0)
+        const next = Math.max(18, Math.min(22, raw))
         cycleMsRef.current = 60_000 / next
         setBpm(next)
       }

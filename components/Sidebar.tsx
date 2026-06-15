@@ -152,7 +152,7 @@ function MobileEcgBar() {
   const animRef       = useRef(0)
   const prevYRef      = useRef<number | null>(null)
   const cycleStartRef = useRef(0)
-  const cycleMsRef    = useRef(60_000 / 72)
+  const cycleMsRef    = useRef(60_000 / 20)
   const audioRef      = useRef(false)
   const lastCycleRef  = useRef(-1)
   const latencyRef    = useRef<number | null>(null)
@@ -219,7 +219,7 @@ function MobileEcgBar() {
 
       if (elapsed >= cycleMs) {
         cycleStartRef.current = now
-        const next = Math.max(55, Math.min(85, 72 + ((Math.random() * 16 - 8) | 0)))
+        const next = Math.max(18, Math.min(22, 20 + ((Math.random() * 2 - 1) | 0)))
         cycleMsRef.current = 60_000 / next
       }
 
@@ -236,10 +236,10 @@ function MobileEcgBar() {
       const MID = H * 0.5
       const AMP = H * 0.42
 
-      const img = ctx.getImageData(2, 0, W - 2, H)
+      const img = ctx.getImageData(1, 0, W - 1, H)
       ctx.putImageData(img, 0, 0)
       ctx.fillStyle = BG
-      ctx.fillRect(W - 3, 0, 3, H)
+      ctx.fillRect(W - 2, 0, 2, H)
 
       const y  = MID - miniEcgValue(t) * AMP
       const py = prevYRef.current ?? y
