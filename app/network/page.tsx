@@ -331,6 +331,8 @@ export default function NetworkPage() {
   const [scanError, setScanError] = useState<string | null>(null)
   const [scanProgress, setScanProgress] = useState(0)
   const [expandedPort, setExpandedPort] = useState<number | null>(null)
+  const [scanMode, setScanMode] = useState<'common' | 'custom'>('common')
+  const [customPorts, setCustomPorts] = useState('')
 
   // Auto-fetched enrichment after scan
   const [sslResult, setSslResult] = useState<SSLResult | null>(null)
@@ -432,6 +434,7 @@ export default function NetworkPage() {
 
   const runScan = async () => {
     if (!scanTarget.trim()) return
+    if (scanMode === 'custom' && countCustomPorts(customPorts) === 0) return
     setScanLoading(true)
     setScanResult(null)
     setScanError(null)
@@ -448,7 +451,10 @@ export default function NetworkPage() {
     }, 200)
 
     try {
-      const res = await fetch(`/api/portscan?host=${encodeURIComponent(scanTarget.trim())}`)
+      const portsParam = scanMode === 'custom' && customPorts.trim()
+        ? `&ports=${encodeURIComponent(customPorts.trim())}`
+        : ''
+      const res = await fetch(`/api/portscan?host=${encodeURIComponent(scanTarget.trim())}${portsParam}`)
       const data = await res.json()
       clearInterval(ticker)
       setScanProgress(100)
@@ -465,6 +471,25 @@ export default function NetworkPage() {
     } finally {
       setScanLoading(false)
     }
+  }
+
+  function countCustomPorts(input: string): number {
+    if (!input.trim()) return 0
+    const result = new Set<number>()
+    const parts = input.split(/[\s,;]+/).filter(Boolean)
+    for (const part of parts) {
+      if (part.includes('-')) {
+        const [a, b] = part.split('-').map(s => parseInt(s, 10))
+        if (!isNaN(a) && !isNaN(b) && a >= 1 && b <= 65535 && a <= b) {
+          const limit = Math.min(b, a + 999)
+          for (let p = a; p <= limit; p++) result.add(p)
+        }
+      } else {
+        const p = parseInt(part, 10)
+        if (!isNaN(p) && p >= 1 && p <= 65535) result.add(p)
+      }
+    }
+    return result.size
   }
 
   const packetLoss = pingStats.sent > 0 ? (pingStats.lost / pingStats.sent) * 100 : 0
@@ -797,25 +822,79 @@ export default function NetworkPage() {
           </div>
 
           {/* Controls */}
-          <div className="card p-4 flex flex-wrap items-end gap-4">
-            <div className="flex-1 min-w-0">
-              <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">Alvo (IP ou domínio)</label>
-              <input
-                className="dark-input"
-                placeholder="ex: example.com ou 93.184.216.34"
-                value={scanTarget}
-                onChange={e => setScanTarget(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && !scanLoading && runScan()}
-              />
+          <div className="card p-4 space-y-3">
+            <div className="flex flex-wrap items-end gap-4">
+              <div className="flex-1 min-w-0">
+                <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">Alvo (IP ou domínio)</label>
+                <input
+                  className="dark-input"
+                  placeholder="ex: example.com ou 93.184.216.34"
+                  value={scanTarget}
+                  onChange={e => setScanTarget(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && !scanLoading && runScan()}
+                />
+              </div>
+              <button
+                onClick={runScan}
+                disabled={scanLoading || !scanTarget.trim() || (scanMode === 'custom' && countCustomPorts(customPorts) === 0)}
+                className="btn-cyan px-5 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 disabled:opacity-50"
+              >
+                {scanLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Radar className="w-4 h-4" />}
+                {scanLoading ? 'Scaneando...' : 'Iniciar Scan'}
+              </button>
             </div>
-            <button
-              onClick={runScan}
-              disabled={scanLoading || !scanTarget.trim()}
-              className="btn-cyan px-5 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 disabled:opacity-50"
-            >
-              {scanLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Radar className="w-4 h-4" />}
-              {scanLoading ? 'Scaneando...' : 'Iniciar Scan'}
-            </button>
+
+            {/* Port mode selector */}
+            <div>
+              <label className="text-xs text-gray-500 mb-2 block uppercase tracking-wider">Portas a Escanear</label>
+              <div className="flex gap-2 mb-2">
+                <button
+                  onClick={() => setScanMode('common')}
+                  className={clsx('px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border', scanMode === 'common' ? 'bg-cyan-500/10 border-cyan-500/30 text-[#00d4ff]' : 'border-[#1a2744] text-gray-500 hover:text-gray-300')}
+                >
+                  Portas Comuns (30)
+                </button>
+                <button
+                  onClick={() => setScanMode('custom')}
+                  className={clsx('px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border', scanMode === 'custom' ? 'bg-cyan-500/10 border-cyan-500/30 text-[#00d4ff]' : 'border-[#1a2744] text-gray-500 hover:text-gray-300')}
+                >
+                  Personalizar
+                </button>
+              </div>
+
+              {scanMode === 'custom' && (
+                <div className="space-y-2">
+                  <input
+                    className="dark-input"
+                    placeholder="ex: 80, 443, 22-25, 3306, 27017"
+                    value={customPorts}
+                    onChange={e => setCustomPorts(e.target.value)}
+                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    {customPorts.trim() && (
+                      <span className={clsx('text-xs mono', countCustomPorts(customPorts) > 500 ? 'text-red-400' : 'text-cyan-400')}>
+                        {countCustomPorts(customPorts)} porta{countCustomPorts(customPorts) !== 1 ? 's' : ''}{countCustomPorts(customPorts) > 500 ? ' (máx 500)' : ''}
+                      </span>
+                    )}
+                    <span className="text-xs text-gray-600">Presets:</span>
+                    {[
+                      { label: 'Web', value: '80, 443, 8080, 8443' },
+                      { label: 'Bancos', value: '3306, 5432, 1433, 27017, 6379, 11211' },
+                      { label: 'Email', value: '25, 110, 143, 587, 993, 995' },
+                      { label: 'Remoto', value: '22, 23, 3389, 5900, 4444' },
+                    ].map(p => (
+                      <button
+                        key={p.label}
+                        onClick={() => setCustomPorts(p.value)}
+                        className="text-xs px-2 py-0.5 rounded border border-[#1a2744] text-gray-500 hover:text-gray-300 hover:border-gray-500 transition-all"
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Progress */}
@@ -824,16 +903,22 @@ export default function NetworkPage() {
               <div className="flex items-center justify-between text-xs text-gray-400 mb-2">
                 <span className="flex items-center gap-2 flex-1 min-w-0">
                   <Radar className="w-3.5 h-3.5 animate-spin text-cyan-400 shrink-0" />
-                  <span className="truncate">Testando 30 portas em paralelo...</span>
+                  <span className="truncate">
+                    {scanMode === 'custom'
+                      ? `Testando ${countCustomPorts(customPorts)} porta${countCustomPorts(customPorts) !== 1 ? 's' : ''} personalizadas...`
+                      : 'Testando 30 portas comuns em paralelo...'}
+                  </span>
                 </span>
                 <span className="mono text-cyan-400">{Math.round(scanProgress)}%</span>
               </div>
               <div className="progress-bar">
                 <div className="progress-fill transition-all duration-300" style={{ width: `${scanProgress}%` }} />
               </div>
-              <p className="text-xs text-gray-600 mt-2">
-                FTP · SSH · Telnet · SMTP · DNS · HTTP · POP3 · IMAP · HTTPS · SMB · MySQL · PostgreSQL · Redis · MongoDB · RDP · VNC · Elasticsearch...
-              </p>
+              {scanMode === 'common' && (
+                <p className="text-xs text-gray-600 mt-2">
+                  FTP · SSH · Telnet · SMTP · DNS · HTTP · POP3 · IMAP · HTTPS · SMB · MySQL · PostgreSQL · Redis · MongoDB · RDP · VNC · Elasticsearch...
+                </p>
+              )}
             </div>
           )}
 
@@ -957,7 +1042,12 @@ export default function NetworkPage() {
             <div className="card p-10 text-center text-gray-600">
               <Radar className="w-12 h-12 mx-auto mb-3 opacity-20" />
               <p className="text-sm">Informe um host e inicie o scan para descobrir portas abertas</p>
-              <p className="text-xs mt-1 text-gray-700">Portas escaneadas: FTP, SSH, Telnet, HTTP/S, SMB, MySQL, PostgreSQL, Redis, MongoDB, RDP, VNC e mais</p>
+              {scanMode === 'common' && (
+                <p className="text-xs mt-1 text-gray-700">Portas escaneadas: FTP, SSH, Telnet, HTTP/S, SMB, MySQL, PostgreSQL, Redis, MongoDB, RDP, VNC e mais</p>
+              )}
+              {scanMode === 'custom' && customPorts.trim() && (
+                <p className="text-xs mt-1 text-gray-700">{countCustomPorts(customPorts)} porta{countCustomPorts(customPorts) !== 1 ? 's' : ''} selecionada{countCustomPorts(customPorts) !== 1 ? 's' : ''}</p>
+              )}
             </div>
           )}
         </div>

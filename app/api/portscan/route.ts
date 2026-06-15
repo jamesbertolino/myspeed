@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import net from 'net'
 import dns from 'dns/promises'
 
-const PORTS: Record<number, string> = {
+const KNOWN_PORTS: Record<number, string> = {
   21: 'FTP',
   22: 'SSH',
   23: 'Telnet',
@@ -33,6 +33,26 @@ const PORTS: Record<number, string> = {
   11211: 'Memcached',
   27017: 'MongoDB',
   27018: 'MongoDB',
+}
+
+const DEFAULT_PORTS = Object.keys(KNOWN_PORTS).map(Number)
+
+function parsePorts(input: string): number[] {
+  const result = new Set<number>()
+  const parts = input.split(/[\s,;]+/).filter(Boolean)
+  for (const part of parts) {
+    if (part.includes('-')) {
+      const [a, b] = part.split('-').map(s => parseInt(s, 10))
+      if (!isNaN(a) && !isNaN(b) && a >= 1 && b <= 65535 && a <= b) {
+        const limit = Math.min(b, a + 999) // max 1000 ports per range
+        for (let p = a; p <= limit; p++) result.add(p)
+      }
+    } else {
+      const p = parseInt(part, 10)
+      if (!isNaN(p) && p >= 1 && p <= 65535) result.add(p)
+    }
+  }
+  return Array.from(result).sort((a, b) => a - b)
 }
 
 async function checkPort(host: string, port: number, timeoutMs = 1500): Promise<{ open: boolean; banner?: string }> {
@@ -77,26 +97,33 @@ async function checkPort(host: string, port: number, timeoutMs = 1500): Promise<
 export async function GET(req: NextRequest) {
   const host = req.nextUrl.searchParams.get('host')?.trim()
   if (!host) return NextResponse.json({ error: 'Host obrigatório' }, { status: 400 })
-
   if (host.length > 253) return NextResponse.json({ error: 'Host inválido' }, { status: 400 })
+
+  // Parse custom port list or use defaults
+  const portsParam = req.nextUrl.searchParams.get('ports')?.trim()
+  let portList: number[]
+  if (portsParam) {
+    portList = parsePorts(portsParam)
+    if (portList.length === 0)
+      return NextResponse.json({ error: 'Nenhuma porta válida. Use: 80,443 ou 80-90' }, { status: 400 })
+    if (portList.length > 500)
+      return NextResponse.json({ error: 'Máximo de 500 portas por scan' }, { status: 400 })
+  } else {
+    portList = DEFAULT_PORTS
+  }
 
   // Resolve hostname → IP
   let ip = host
   try {
     if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
-      const addrs = await dns.resolve4(host).catch(async () => {
-        const v6 = await dns.resolve6(host)
-        return v6
-      })
+      const addrs = await dns.resolve4(host).catch(async () => dns.resolve6(host))
       ip = addrs[0]
     }
   } catch {
     return NextResponse.json({ error: `Não foi possível resolver: ${host}` }, { status: 400 })
   }
 
-  const portList = Object.keys(PORTS).map(Number)
   const BATCH = 10
-
   const open: Array<{ port: number; service: string; banner?: string }> = []
 
   for (let i = 0; i < portList.length; i += BATCH) {
@@ -104,7 +131,7 @@ export async function GET(req: NextRequest) {
     const results = await Promise.all(
       batch.map(async (port) => ({
         port,
-        service: PORTS[port],
+        service: KNOWN_PORTS[port] ?? `${port}/tcp`,
         ...(await checkPort(ip, port)),
       }))
     )
@@ -113,11 +140,5 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({
-    host,
-    ip,
-    open,
-    total: portList.length,
-    scanned: portList.length,
-  })
+  return NextResponse.json({ host, ip, open, total: portList.length, scanned: portList.length })
 }
