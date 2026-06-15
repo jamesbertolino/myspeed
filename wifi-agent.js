@@ -361,7 +361,14 @@ function deviceRiskLevel(openPorts) {
   return 'low'
 }
 
-function getArpHosts() {
+function isPrivateIp(ip) {
+  const parts = ip.split('.').map(Number)
+  const [a, b] = parts
+  if (parts.length !== 4 || parts.some(isNaN)) return false
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+}
+
+function getArpHosts(targetSubnet) {
   const ips = new Map()
   try {
     let out
@@ -369,29 +376,31 @@ function getArpHosts() {
       out = execSync('arp -a', { encoding: 'utf8', timeout: 5000 })
       for (const line of out.split('\n')) {
         const m = line.match(/\s+([\d.]+)\s+([\da-f]{2}[-][\da-f]{2}[-][\da-f]{2}[-][\da-f]{2}[-][\da-f]{2}[-][\da-f]{2})\s+/i)
-        if (m) ips.set(m[1], m[2].replace(/-/g, ':').toLowerCase())
+        if (m && isPrivateIp(m[1]) && (!targetSubnet || m[1].startsWith(targetSubnet + '.')))
+          ips.set(m[1], m[2].replace(/-/g, ':').toLowerCase())
       }
     } else if (process.platform === 'darwin') {
       out = execSync('arp -a 2>/dev/null', { encoding: 'utf8', timeout: 5000 })
       for (const line of out.split('\n')) {
         const m = line.match(/\(([^)]+)\)\s+at\s+([\da-f:]{17})/i)
-        if (m && m[2] !== 'ff:ff:ff:ff:ff:ff') ips.set(m[1], m[2].toLowerCase())
+        if (m && m[2] !== 'ff:ff:ff:ff:ff:ff' && isPrivateIp(m[1]) && (!targetSubnet || m[1].startsWith(targetSubnet + '.')))
+          ips.set(m[1], m[2].toLowerCase())
       }
     } else {
       try {
         out = execSync('ip neigh show 2>/dev/null', { encoding: 'utf8', timeout: 5000 })
         for (const line of out.split('\n')) {
           const m = line.match(/^([\d.]+)\s+\S+\s+\S+\s+([\da-f:]{17})/i)
-          if (m) ips.set(m[1], m[2].toLowerCase())
+          if (m && isPrivateIp(m[1]) && (!targetSubnet || m[1].startsWith(targetSubnet + '.')))
+            ips.set(m[1], m[2].toLowerCase())
         }
       } catch (_) {
         try {
           out = execSync('arp -n 2>/dev/null', { encoding: 'utf8', timeout: 5000 })
           for (const line of out.split('\n').slice(1)) {
             const p = line.trim().split(/\s+/)
-            if (p.length >= 3 && p[2] && p[2].includes(':') && p[2] !== '(incomplete)') {
+            if (p.length >= 3 && p[2] && p[2].includes(':') && p[2] !== '(incomplete)' && isPrivateIp(p[0]) && (!targetSubnet || p[0].startsWith(targetSubnet + '.')))
               ips.set(p[0], p[2].toLowerCase())
-            }
           }
         } catch (_2) {}
       }
@@ -458,8 +467,9 @@ async function handleDevices(req, res) {
 
   ndjson({ type: 'start' })
 
-  const arpHosts = getArpHosts()
   const subnetInfo = getLocalSubnet()
+  const targetSubnet = subnetInfo ? subnetInfo.subnet : null
+  const arpHosts = getArpHosts(targetSubnet)
 
   if (subnetInfo) {
     ndjson({ type: 'progress', message: `Varrendo ${subnetInfo.subnet}.0/24 (isso pode levar alguns segundos)...` })
@@ -468,7 +478,15 @@ async function handleDevices(req, res) {
     })
   }
 
-  const hosts = [...arpHosts.entries()].filter(([ip]) => /^[\d.]+$/.test(ip))
+  // Filtro final: apenas IPs do subnet alvo, sem broadcast nem multicast
+  const hosts = [...arpHosts.entries()].filter(([ip]) => {
+    if (!targetSubnet || !ip.startsWith(targetSubnet + '.')) return false
+    const last = parseInt(ip.split('.')[3])
+    if (last === 0 || last === 255) return false
+    const first = parseInt(ip.split('.')[0])
+    if (first >= 224) return false
+    return true
+  })
   ndjson({ type: 'hosts', count: hosts.length })
 
   let count = 0
