@@ -585,42 +585,65 @@ export default function DevicesPage() {
       </div>
 
       {/* Interface selector */}
-      {interfaces.length > 0 && (
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-lg bg-[#0b1527] border border-[#1a2744]">
-          <div className="flex items-center gap-2 shrink-0">
-            <Router className="w-4 h-4 text-cyan-400" />
-            <span className="text-sm font-medium text-gray-300">Interface de rede:</span>
-          </div>
-          <div className="flex flex-wrap gap-2 flex-1">
-            {interfaces.map(iface => (
-              <button
-                key={iface.subnet}
-                disabled={scanning}
-                onClick={() => setSelectedSubnet(iface.subnet)}
-                className={clsx(
-                  'flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all',
-                  selectedSubnet === iface.subnet
-                    ? 'bg-cyan-500/15 border-cyan-500/40 text-cyan-300'
-                    : 'bg-white/3 border-[#1a2744] text-gray-400 hover:border-cyan-500/30 hover:text-gray-200'
-                )}
-              >
-                <span className={clsx(
-                  'w-1.5 h-1.5 rounded-full shrink-0',
-                  selectedSubnet === iface.subnet ? 'bg-cyan-400' : 'bg-gray-600'
-                )} />
-                <span className="font-mono">{iface.name}</span>
-                <span className="text-gray-500">·</span>
-                <span className="font-mono">{iface.address}</span>
-                <span className="text-gray-500 hidden sm:inline">·</span>
-                <span className="text-gray-500 hidden sm:inline">{iface.subnet}.0/24</span>
-              </button>
-            ))}
-          </div>
-          {interfaces.length === 1 && (
-            <span className="text-[11px] text-gray-600">Apenas uma interface disponível</span>
-          )}
+      <div className="flex flex-col gap-3 p-4 rounded-lg bg-[#0b1527] border border-[#1a2744]">
+        <div className="flex items-center gap-2">
+          <Router className="w-4 h-4 text-cyan-400" />
+          <span className="text-sm font-medium text-gray-300">Interface de rede:</span>
         </div>
-      )}
+        <div className="flex flex-wrap gap-2">
+          {interfaces.map(iface => (
+            <button
+              key={iface.subnet}
+              disabled={scanning}
+              onClick={() => setSelectedSubnet(iface.subnet)}
+              className={clsx(
+                'flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all',
+                selectedSubnet === iface.subnet
+                  ? 'bg-cyan-500/15 border-cyan-500/40 text-cyan-300'
+                  : 'bg-white/3 border-[#1a2744] text-gray-400 hover:border-cyan-500/30 hover:text-gray-200'
+              )}
+            >
+              <span className={clsx(
+                'w-1.5 h-1.5 rounded-full shrink-0',
+                selectedSubnet === iface.subnet ? 'bg-cyan-400' : 'bg-gray-600'
+              )} />
+              <span className="font-mono">{iface.name}</span>
+              <span className="text-gray-500">·</span>
+              <span className="font-mono">{iface.address}</span>
+              <span className="text-gray-500 hidden sm:inline">·</span>
+              <span className="text-gray-500 hidden sm:inline">{iface.subnet}.0/24</span>
+            </button>
+          ))}
+        </div>
+        {/* Campo personalizado */}
+        <div className="flex items-center gap-2 pt-1 border-t border-[#1a2744]">
+          <span className="text-xs text-gray-500 shrink-0">Rede personalizada:</span>
+          <div className="flex items-center gap-1 flex-1">
+            <input
+              type="text"
+              disabled={scanning}
+              placeholder="ex: 10.0.0"
+              value={!interfaces.some(i => i.subnet === selectedSubnet) ? selectedSubnet : ''}
+              onChange={e => {
+                const v = e.target.value.replace(/[^0-9.]/g, '')
+                setSelectedSubnet(v)
+              }}
+              onKeyDown={e => { if (e.key === 'Enter' && selectedSubnet) startScan(selectedSubnet) }}
+              className="flex-1 max-w-[160px] bg-[#0a1128] border border-[#1a2744] text-gray-200 rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-cyan-500/50 placeholder-gray-700 transition-all"
+            />
+            <span className="text-xs text-gray-600 font-mono">.0/24</span>
+            {!interfaces.some(i => i.subnet === selectedSubnet) && selectedSubnet.match(/^\d+\.\d+\.\d+$/) && (
+              <button
+                disabled={scanning}
+                onClick={() => startScan(selectedSubnet)}
+                className="px-3 py-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/40 text-cyan-300 text-xs font-medium hover:bg-cyan-500/25 transition-all disabled:opacity-40"
+              >
+                Varrer
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
 
       {/* Agent status banner */}
       {agentChecked && (
