@@ -347,7 +347,7 @@ export default function WiFiPage() {
       )}
 
       {/* Band Selector */}
-      <div className="flex gap-1 mb-6 bg-[#0a1128] rounded-xl p-1 border border-[#1a2744] w-fit">
+      <div className="flex gap-1 mb-6 bg-[#0a1128] rounded-xl p-1 border border-[#1a2744] overflow-x-auto">
         {(['2.4', '5'] as const).map(b => (
           <button
             key={b}

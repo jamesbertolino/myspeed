@@ -435,7 +435,7 @@ export default function SpeedTestPage() {
               </div>
             </div>
           ) : (
-            <div className="flex items-center gap-2 mb-6">
+            <div className="flex items-center gap-2 mb-6 flex-wrap">
               {(['ping', 'download', 'upload'] as const).map((p, i) => {
                 const done = phase === 'done' || (phase === 'upload' && p !== 'upload') || (phase === 'download' && p === 'ping')
                 const active = phase === p

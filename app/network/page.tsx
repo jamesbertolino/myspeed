@@ -308,7 +308,7 @@ export default function NetworkPage() {
             </div>
           )}
 
-          <div className="card overflow-hidden">
+          <div className="card overflow-x-auto">
             {traceHops.length === 0 && !traceLoading ? (
               <div className="p-8 text-center text-gray-600 text-sm">
                 <Network className="w-8 h-8 mx-auto mb-2 opacity-30" />

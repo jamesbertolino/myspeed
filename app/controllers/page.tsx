@@ -226,7 +226,7 @@ export default function ControllersPage() {
       </div>
 
       {/* Tab Selector */}
-      <div className="flex gap-1 mb-6 bg-[#0a1128] rounded-xl p-1 border border-[#1a2744] w-fit">
+      <div className="flex gap-1 mb-6 bg-[#0a1128] rounded-xl p-1 border border-[#1a2744] overflow-x-auto">
         {([
           { id: 'unifi', icon: Wifi, label: 'UniFi Controller' },
           { id: 'mikrotik', icon: Server, label: 'MikroTik RouterOS' },
@@ -345,7 +345,7 @@ export default function ControllersPage() {
               </div>
 
               {/* Sub-tabs */}
-              <div className="flex gap-1 mb-4 w-fit">
+              <div className="flex gap-1 mb-4 overflow-x-auto">
                 {(['devices', 'clients', 'wlan'] as const).map(v => (
                   <button key={v} onClick={() => setUnifiView(v)}
                     className={clsx('px-4 py-1.5 rounded-lg text-xs font-semibold transition-all',
@@ -513,7 +513,7 @@ export default function ControllersPage() {
               </div>
 
               {/* Sub-tabs */}
-              <div className="flex gap-1 mb-4 w-fit">
+              <div className="flex gap-1 mb-4 overflow-x-auto">
                 {(['overview', 'interfaces', 'wireless'] as const).map(v => (
                   <button key={v} onClick={() => setMtView(v)}
                     className={clsx('px-4 py-1.5 rounded-lg text-xs font-semibold transition-all',
