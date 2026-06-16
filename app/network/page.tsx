@@ -3,7 +3,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import {
   Activity, Search, Network, Play, Square, AlertTriangle,
-  CheckCircle, Clock, Globe, ChevronRight, Loader2, Zap, Copy, Check
+  CheckCircle, Clock, Globe, ChevronRight, Loader2, Zap, Copy, Check,
+  FileSearch, Calendar, Shield, Server, ExternalLink, ChevronDown, ChevronUp
 } from 'lucide-react'
 import LatencyChart from '@/components/LatencyChart'
 import { latencyColor, calcJitter, jitterColor, jitterLabel, latencyLabel, formatLatency } from '@/lib/utils'
@@ -39,6 +40,26 @@ const PING_PRESETS = [
 const DNS_TYPES = ['A', 'AAAA', 'MX', 'TXT', 'NS', 'CNAME', 'SOA', 'ALL']
 
 
+interface WhoisResult {
+  domain: string
+  elapsed: number
+  server: string
+  domainName: string
+  registrar: string
+  registrarUrl: string
+  createdDate: string
+  updatedDate: string
+  expiresDate: string
+  status: string[]
+  nameServers: string[]
+  dnssec: string
+  country: string
+  organization: string
+  abuse: string
+  raw: string
+  error?: string
+}
+
 interface BenchResult {
   name: string
   ip: string
@@ -50,7 +71,7 @@ interface BenchResult {
 }
 
 export default function NetworkPage() {
-  const [tab, setTab] = useState<'ping' | 'traceroute' | 'dns' | 'benchmark'>('ping')
+  const [tab, setTab] = useState<'ping' | 'traceroute' | 'dns' | 'benchmark' | 'whois'>('ping')
 
   // Ping state
   const [pingData, setPingData] = useState<PingPoint[]>([])
@@ -82,6 +103,13 @@ export default function NetworkPage() {
   const [dnsType, setDnsType] = useState('A')
   const [dnsResult, setDnsResult] = useState<DnsResult | null>(null)
   const [dnsLoading, setDnsLoading] = useState(false)
+
+  // WHOIS state
+  const [whoisDomain, setWhoisDomain] = useState('google.com')
+  const [whoisResult, setWhoisResult] = useState<WhoisResult | null>(null)
+  const [whoisLoading, setWhoisLoading] = useState(false)
+  const [whoisError, setWhoisError] = useState('')
+  const [whoisRawOpen, setWhoisRawOpen] = useState(false)
 
   const doPing = useCallback(async () => {
     const s = pingAllStats.current
@@ -181,6 +209,23 @@ export default function NetworkPage() {
     }
   }
 
+  const runWhois = async () => {
+    setWhoisLoading(true)
+    setWhoisError('')
+    setWhoisResult(null)
+    setWhoisRawOpen(false)
+    try {
+      const res = await fetch(`/api/whois?domain=${encodeURIComponent(whoisDomain.trim())}`)
+      const data: WhoisResult = await res.json()
+      if (data.error) setWhoisError(data.error)
+      else setWhoisResult(data)
+    } catch {
+      setWhoisError('Falha ao consultar WHOIS')
+    } finally {
+      setWhoisLoading(false)
+    }
+  }
+
   const packetLoss = pingStats.sent > 0 ? (pingStats.lost / pingStats.sent) * 100 : 0
   const lastLatency = pingData[pingData.length - 1]?.latency ?? null
 
@@ -198,6 +243,7 @@ export default function NetworkPage() {
           { id: 'traceroute', icon: Network, label: 'Traceroute' },
           { id: 'dns', icon: Globe, label: 'DNS Lookup' },
           { id: 'benchmark', icon: Zap, label: 'DNS Benchmark' },
+          { id: 'whois', icon: FileSearch, label: 'WHOIS' },
         ] as const).map(t => (
           <button
             key={t.id}
@@ -671,6 +717,204 @@ export default function NetworkPage() {
               </div>
             )
           })()}
+        </div>
+      )}
+
+      {/* WHOIS TAB */}
+      {tab === 'whois' && (
+        <div className="space-y-4">
+          {/* barra de busca */}
+          <div className="card p-4 flex flex-wrap items-end gap-4">
+            <div className="flex-1 min-w-48">
+              <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">Domínio</label>
+              <input
+                className="dark-input"
+                value={whoisDomain}
+                onChange={e => setWhoisDomain(e.target.value)}
+                placeholder="ex: google.com"
+                onKeyDown={e => e.key === 'Enter' && !whoisLoading && runWhois()}
+              />
+            </div>
+            <button
+              onClick={runWhois}
+              disabled={whoisLoading}
+              className="btn-cyan px-5 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 disabled:opacity-50"
+            >
+              {whoisLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSearch className="w-4 h-4" />}
+              {whoisLoading ? 'Consultando…' : 'Consultar WHOIS'}
+            </button>
+          </div>
+
+          {whoisError && (
+            <div className="flex items-center gap-2 text-red-400 text-sm bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              {whoisError}
+            </div>
+          )}
+
+          {whoisResult && (
+            <div className="space-y-4">
+              {/* header */}
+              <div className="card p-5">
+                <div className="flex items-start justify-between gap-4 mb-5">
+                  <div>
+                    <h2 className="text-lg font-bold text-white">{whoisResult.domainName || whoisResult.domain}</h2>
+                    {whoisResult.organization && (
+                      <p className="text-sm text-gray-400 mt-0.5">{whoisResult.organization}</p>
+                    )}
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {whoisResult.status.slice(0, 4).map(s => {
+                        const ok = s.toLowerCase().includes('active') || s.toLowerCase().includes('ok')
+                        return (
+                          <span key={s} className={`tag text-[10px] ${ok ? 'tag-green' : 'tag-yellow'}`}>
+                            {s.split(' ')[0].replace('client', '').replace('server', '').trim() || s}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-xs text-gray-600">Consultado em</p>
+                    <p className="text-xs text-gray-500 mono">{whoisResult.elapsed}ms</p>
+                    <p className="text-xs text-gray-700 mt-1 mono">{whoisResult.server}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {/* Registrar */}
+                  {whoisResult.registrar && (
+                    <div className="bg-white/3 rounded-xl p-3.5">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <Shield className="w-3.5 h-3.5 text-[#00d4ff]" />
+                        <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Registrar</span>
+                      </div>
+                      <p className="text-sm text-white font-medium">{whoisResult.registrar}</p>
+                      {whoisResult.registrarUrl && (
+                        <a
+                          href={whoisResult.registrarUrl.startsWith('http') ? whoisResult.registrarUrl : `https://${whoisResult.registrarUrl}`}
+                          target="_blank" rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-xs text-[#00d4ff]/70 hover:text-[#00d4ff] mt-1 transition-colors"
+                        >
+                          <ExternalLink className="w-3 h-3" />{whoisResult.registrarUrl}
+                        </a>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Criação */}
+                  {whoisResult.createdDate && (
+                    <div className="bg-white/3 rounded-xl p-3.5">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <Calendar className="w-3.5 h-3.5 text-[#00ff88]" />
+                        <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Criado em</span>
+                      </div>
+                      <p className="text-sm text-white font-medium mono">
+                        {whoisResult.createdDate.split('T')[0]}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Expiração */}
+                  {whoisResult.expiresDate && (() => {
+                    const exp = new Date(whoisResult.expiresDate)
+                    const daysLeft = Math.ceil((exp.getTime() - Date.now()) / 86400000)
+                    const expired = daysLeft < 0
+                    const soon = daysLeft >= 0 && daysLeft <= 30
+                    return (
+                      <div className={`bg-white/3 rounded-xl p-3.5 ${expired ? 'border border-red-500/30' : soon ? 'border border-amber-500/30' : ''}`}>
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <Calendar className={`w-3.5 h-3.5 ${expired ? 'text-red-400' : soon ? 'text-amber-400' : 'text-gray-400'}`} />
+                          <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Expira em</span>
+                        </div>
+                        <p className={`text-sm font-medium mono ${expired ? 'text-red-400' : soon ? 'text-amber-400' : 'text-white'}`}>
+                          {whoisResult.expiresDate.split('T')[0]}
+                        </p>
+                        <p className={`text-xs mt-0.5 ${expired ? 'text-red-400' : soon ? 'text-amber-400' : 'text-gray-500'}`}>
+                          {expired ? `Expirado há ${Math.abs(daysLeft)} dias` : `${daysLeft} dias restantes`}
+                        </p>
+                      </div>
+                    )
+                  })()}
+
+                  {/* Última atualização */}
+                  {whoisResult.updatedDate && (
+                    <div className="bg-white/3 rounded-xl p-3.5">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <Clock className="w-3.5 h-3.5 text-gray-500" />
+                        <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Atualizado</span>
+                      </div>
+                      <p className="text-sm text-white mono">{whoisResult.updatedDate.split('T')[0]}</p>
+                    </div>
+                  )}
+
+                  {/* País */}
+                  {whoisResult.country && (
+                    <div className="bg-white/3 rounded-xl p-3.5">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <Globe className="w-3.5 h-3.5 text-gray-500" />
+                        <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">País</span>
+                      </div>
+                      <p className="text-sm text-white">{whoisResult.country}</p>
+                    </div>
+                  )}
+
+                  {/* DNSSEC */}
+                  {whoisResult.dnssec && (
+                    <div className="bg-white/3 rounded-xl p-3.5">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <Shield className="w-3.5 h-3.5 text-gray-500" />
+                        <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">DNSSEC</span>
+                      </div>
+                      <p className="text-sm text-white">{whoisResult.dnssec}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Name Servers */}
+              {whoisResult.nameServers.length > 0 && (
+                <div className="card p-5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Server className="w-4 h-4 text-[#00d4ff]" />
+                    <h3 className="text-sm font-semibold text-white">Name Servers</h3>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {whoisResult.nameServers.map(ns => (
+                      <div key={ns} className="flex items-center gap-2 bg-white/3 rounded-lg px-3 py-2">
+                        <ChevronRight className="w-3 h-3 text-[#00d4ff] shrink-0" />
+                        <span className="text-sm text-gray-300 mono truncate">{ns.toLowerCase()}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Raw WHOIS */}
+              {whoisResult.raw && (
+                <div className="card overflow-hidden">
+                  <button
+                    onClick={() => setWhoisRawOpen(p => !p)}
+                    className="w-full flex items-center justify-between px-5 py-3.5 text-sm text-gray-400 hover:text-gray-200 transition-colors"
+                  >
+                    <span className="font-semibold">Resposta bruta (raw WHOIS)</span>
+                    {whoisRawOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
+                  {whoisRawOpen && (
+                    <pre className="px-5 pb-5 text-xs text-gray-500 mono whitespace-pre-wrap break-all leading-5 max-h-96 overflow-y-auto border-t border-white/5">
+                      {whoisResult.raw}
+                    </pre>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!whoisResult && !whoisLoading && !whoisError && (
+            <div className="card p-10 flex flex-col items-center gap-3 text-gray-600">
+              <FileSearch className="w-10 h-10 opacity-30" />
+              <p className="text-sm">Digite um domínio e clique em Consultar WHOIS</p>
+            </div>
+          )}
         </div>
       )}
     </div>
