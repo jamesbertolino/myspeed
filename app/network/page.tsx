@@ -32,9 +32,10 @@ interface DnsResult {
 }
 
 const PING_PRESETS = [
-  { label: 'Este Servidor', url: '/api/ping', tag: 'LOCAL' },
-  { label: '1.1.1.1 (Cloudflare)', url: 'https://one.one.one.one/dns-query?name=a&type=A', tag: 'CF' },
-  { label: '8.8.8.8 (Google)', url: 'https://dns.google/dns-query?name=a&type=A', tag: 'G' },
+  { label: 'Gateway local',       target: 'gateway', tag: 'GW'    },
+  { label: '1.1.1.1 (Cloudflare)', target: '1.1.1.1', tag: 'CF'  },
+  { label: '8.8.8.8 (Google)',     target: '8.8.8.8', tag: 'G'   },
+  { label: '9.9.9.9 (Quad9)',      target: '9.9.9.9', tag: 'Q9'  },
 ]
 
 const DNS_TYPES = ['A', 'AAAA', 'MX', 'TXT', 'NS', 'CNAME', 'SOA', 'ALL']
@@ -76,7 +77,7 @@ export default function NetworkPage() {
   // Ping state
   const [pingData, setPingData] = useState<PingPoint[]>([])
   const [pingRunning, setPingRunning] = useState(false)
-  const [pingTarget, setPingTarget] = useState(PING_PRESETS[0].url)
+  const [pingTarget, setPingTarget] = useState(PING_PRESETS[0].target)
   const [pingCustom, setPingCustom] = useState('')
   const [pingStats, setPingStats] = useState({ min: 0, max: 0, avg: 0, sent: 0, lost: 0 })
   const [jitter, setJitter] = useState(0)
@@ -117,11 +118,12 @@ export default function NetworkPage() {
   const doPing = useCallback(async () => {
     const s = pingAllStats.current
     s.sent++
-    const t0 = performance.now()
-    const url = pingCustom ? `https://${pingCustom}` : pingTarget
+    const target = pingCustom.trim() || pingTarget
     try {
-      await fetch(url + `?_t=${Date.now()}`, { cache: 'no-store' })
-      const lat = performance.now() - t0
+      const res  = await fetch(`/api/ping?target=${encodeURIComponent(target)}`, { cache: 'no-store' })
+      const data = await res.json()
+      if (data.ms < 0) throw new Error('timeout')
+      const lat = data.ms as number
       pingHistory.current = [...pingHistory.current.slice(-99), lat]
       setPingData(prev => [...prev.slice(-99), { t: Date.now(), latency: lat }])
       s.min = Math.min(s.min, lat)
@@ -335,21 +337,21 @@ export default function NetworkPage() {
               <select
                 value={pingCustom ? 'custom' : pingTarget}
                 onChange={e => {
-                  if (e.target.value === 'custom') { setPingCustom(''); }
+                  if (e.target.value === 'custom') { setPingCustom('') }
                   else { setPingCustom(''); setPingTarget(e.target.value) }
                 }}
                 className="bg-[#050a1a] border border-[#1a2744] text-gray-300 text-sm rounded-lg px-3 py-2 outline-none min-w-48"
               >
-                {PING_PRESETS.map(p => <option key={p.url} value={p.url}>{p.label}</option>)}
-                <option value="custom">Personalizado...</option>
+                {PING_PRESETS.map(p => <option key={p.target} value={p.target}>{p.label}</option>)}
+                <option value="custom">Personalizado…</option>
               </select>
             </div>
-            {(pingTarget === 'custom' || pingCustom) && (
+            {(pingTarget === 'custom' || pingCustom !== '') && (
               <div>
-                <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">Host</label>
+                <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">Host / IP</label>
                 <input
                   className="dark-input w-48"
-                  placeholder="ex: example.com"
+                  placeholder="ex: 192.168.1.1"
                   value={pingCustom}
                   onChange={e => setPingCustom(e.target.value)}
                 />
@@ -366,11 +368,11 @@ export default function NetworkPage() {
           {/* Stats Bar */}
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
             {[
-              { label: 'Atual', value: lastLatency ? `${lastLatency.toFixed(1)}ms` : '—', color: lastLatency ? latencyColor(lastLatency) : '#4a5568' },
-              { label: 'Mínimo', value: pingStats.min !== Infinity ? `${pingStats.min.toFixed(1)}ms` : '—', color: '#00ff88' },
-              { label: 'Máximo', value: pingStats.max > 0 ? `${pingStats.max.toFixed(1)}ms` : '—', color: '#ff4d4d' },
-              { label: 'Média', value: pingStats.avg > 0 ? `${pingStats.avg.toFixed(1)}ms` : '—', color: '#00d4ff' },
-              { label: 'Jitter', value: jitter > 0 ? `${jitter.toFixed(1)}ms` : '—', color: jitterColor(jitter) },
+              { label: 'Atual',  value: lastLatency != null ? `${lastLatency} ms` : '—',                              color: lastLatency != null ? latencyColor(lastLatency) : '#4a5568' },
+              { label: 'Mínimo', value: pingStats.min !== Infinity ? `${pingStats.min} ms` : '—',                    color: '#00ff88' },
+              { label: 'Máximo', value: pingStats.max > 0 ? `${pingStats.max} ms` : '—',                             color: '#ff4d4d' },
+              { label: 'Média',  value: pingStats.avg > 0 ? `${pingStats.avg.toFixed(1)} ms` : '—',                  color: '#00d4ff' },
+              { label: 'Jitter', value: jitter > 0 ? `${jitter.toFixed(1)} ms` : '—',                               color: jitterColor(jitter) },
             ].map(s => (
               <div key={s.label} className="card p-3">
                 <p className="text-xs text-gray-600 mb-1">{s.label}</p>
