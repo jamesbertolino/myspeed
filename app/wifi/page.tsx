@@ -13,8 +13,13 @@ export interface AIAnalysis {
   recommendations: Array<{ priority: 'high' | 'medium' | 'low'; title: string; detail: string }>
   bestChannel24: number
   bestChannel5: number
+  channelReasoning24?: string
+  channelReasoning5?: string
+  preferredBand?: '2.4' | '5' | 'both'
+  preferredBandReason?: string
   congestion24: 'low' | 'medium' | 'high'
   congestion5: 'low' | 'medium' | 'high'
+  securityIssues?: Array<{ ssid: string; issue: string; severity: string }>
 }
 
 const CHANNELS_24 = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
@@ -238,18 +243,48 @@ export default function WiFiPage() {
     setAnalyzing(true)
     setAiAnalysis(null)
     try {
+      // Monta payload rico: AI recebe contexto completo sobre quais são seu AP,
+      // quais hidden são fantasmas e quais são vizinhos reais.
+      const named = nets.filter(n => n.ssid !== 'Hidden')
+      const ghostNets = nets.filter(n => {
+        if (n.ssid !== 'Hidden') return false
+        return named.some(m => m.band === n.band && m.channel === n.channel && (
+          sameMacPrefix(m.bssid, n.bssid) || Math.abs(m.signal - n.signal) <= 3
+        ))
+      })
+      const clean = stripGhostHidden(nets)
+      const s24 = clean.filter(n => n.band === '2.4').reduce<WiFiNetwork | null>(
+        (s, n) => !s || n.signal > s.signal ? n : s, null)
+      const s5 = clean.filter(n => n.band === '5').reduce<WiFiNetwork | null>(
+        (s, n) => !s || n.signal > s.signal ? n : s, null)
+      const compNets = clean.filter(n => n !== s24 && n !== s5)
+
+      const body = {
+        networks: nets,
+        competitors: compNets,
+        ownNetwork24: s24 ? { ssid: s24.ssid, channel: s24.channel, signal: s24.signal, band: s24.band, bssid: s24.bssid } : null,
+        ownNetwork5:  s5  ? { ssid: s5.ssid,  channel: s5.channel,  signal: s5.signal,  band: s5.band,  bssid: s5.bssid  } : null,
+        ghosts: ghostNets.map(g => ({
+          bssid: g.bssid,
+          channel: g.channel,
+          signal: g.signal,
+          reason: (s24 || s5) && sameMacPrefix((s24 ?? s5)!.bssid, g.bssid)
+            ? 'mac_prefix' : 'signal_proximity',
+        })),
+        preComputedBestChannel24: recommended24,
+        preComputedBestChannel5: recommended5,
+      }
+
       const res = await fetch('/api/wifi/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ networks: nets }),
+        body: JSON.stringify(body),
       })
       const data = await res.json()
       if (data.analysis) {
-        // A IA é não-determinística na escolha de canal (varia entre chamadas com a
-        // mesma amostra). Sobrescreve com o cálculo local determinístico + histerese,
-        // mantendo da IA apenas o texto (resumo, recomendações, segurança).
         setAiAnalysis({
           ...data.analysis,
+          // Canal mantido local (determinístico) — IA valida/explica, não escolhe
           bestChannel24: recommended24,
           bestChannel5: recommended5,
         })
@@ -257,7 +292,7 @@ export default function WiFiPage() {
     } catch { /* análise silenciosa — não bloqueia o scan */ }
     finally { setAnalyzing(false) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recommended24, recommended5])
+  }, [recommended24, recommended5, networks])
 
   // Remove duplicatas "Hidden" do próprio roteador antes de calcular interferência
   const cleanNetworks = useMemo(() => stripGhostHidden(networks), [networks])
@@ -833,7 +868,19 @@ export default function WiFiPage() {
                 </div>
                 <div className="flex-1">
                   <p className="text-sm text-gray-300 leading-relaxed">{aiAnalysis.summary}</p>
-                  <div className="flex gap-3 mt-3">
+
+                  {/* Banda preferida */}
+                  {aiAnalysis.preferredBand && (
+                    <div className="mt-3 px-3 py-2 rounded-lg bg-[#050a1a] border border-cyan-500/20 text-xs">
+                      <span className="text-gray-500">Banda recomendada agora: </span>
+                      <span className="text-cyan-400 font-bold">{aiAnalysis.preferredBand === 'both' ? '2.4 + 5 GHz' : `${aiAnalysis.preferredBand} GHz`}</span>
+                      {aiAnalysis.preferredBandReason && (
+                        <p className="text-gray-500 mt-1">{aiAnalysis.preferredBandReason}</p>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap gap-2 mt-3">
                     <div className="bg-[#050a1a] border border-[#1a2744] rounded-lg px-3 py-1.5 text-xs">
                       <span className="text-gray-500">Melhor 2.4GHz</span>
                       <span className="ml-2 text-cyan-400 font-bold">CH {aiAnalysis.bestChannel24}</span>
@@ -851,7 +898,34 @@ export default function WiFiPage() {
                         {aiAnalysis.congestion24 === 'low' ? 'Baixo' : aiAnalysis.congestion24 === 'medium' ? 'Médio' : 'Alto'}
                       </span>
                     </div>
+                    <div className="bg-[#050a1a] border border-[#1a2744] rounded-lg px-3 py-1.5 text-xs">
+                      <span className="text-gray-500">Congesto 5</span>
+                      <span className={clsx('ml-2 font-bold',
+                        aiAnalysis.congestion5 === 'low' ? 'text-green-400' :
+                        aiAnalysis.congestion5 === 'medium' ? 'text-yellow-400' : 'text-red-400'
+                      )}>
+                        {aiAnalysis.congestion5 === 'low' ? 'Baixo' : aiAnalysis.congestion5 === 'medium' ? 'Médio' : 'Alto'}
+                      </span>
+                    </div>
                   </div>
+
+                  {/* Raciocínio de canal */}
+                  {(aiAnalysis.channelReasoning24 || aiAnalysis.channelReasoning5) && (
+                    <div className="mt-3 space-y-1.5">
+                      {aiAnalysis.channelReasoning24 && (
+                        <div className="px-3 py-2 rounded-lg bg-[#050a1a] border border-[#1a2744] text-xs text-gray-400">
+                          <span className="text-gray-500 font-semibold">2.4GHz CH{aiAnalysis.bestChannel24}: </span>
+                          {aiAnalysis.channelReasoning24}
+                        </div>
+                      )}
+                      {aiAnalysis.channelReasoning5 && (
+                        <div className="px-3 py-2 rounded-lg bg-[#050a1a] border border-[#1a2744] text-xs text-gray-400">
+                          <span className="text-gray-500 font-semibold">5GHz CH{aiAnalysis.bestChannel5}: </span>
+                          {aiAnalysis.channelReasoning5}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
