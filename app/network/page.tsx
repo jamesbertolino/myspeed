@@ -46,6 +46,7 @@ interface BenchResult {
   avg: number
   samples: number[]
   timeout: boolean
+  isp: boolean
 }
 
 export default function NetworkPage() {
@@ -73,6 +74,7 @@ export default function NetworkPage() {
   const [benchLoading,  setBenchLoading]  = useState(false)
   const [benchCustomIp, setBenchCustomIp] = useState('')
   const [benchDone,     setBenchDone]     = useState(false)
+  const [benchIspFound, setBenchIspFound] = useState(false)
   const [copied,        setCopied]        = useState('')
 
   // DNS state
@@ -148,8 +150,9 @@ export default function NetworkPage() {
       ])
 
       const rows: BenchResult[] = mainRes.results ?? []
+      setBenchIspFound(mainRes.ispFound ?? false)
       if (customRes?.avg != null) {
-        rows.push({ name: `Personalizado (${customTrim})`, ip: customTrim, flag: '⚙️', avg: customRes.avg, samples: customRes.samples, timeout: customRes.timeout })
+        rows.push({ name: `Personalizado (${customTrim})`, ip: customTrim, flag: '⚙️', avg: customRes.avg, samples: customRes.samples, timeout: customRes.timeout, isp: false })
         rows.sort((a, b) => (a.timeout ? 1 : 0) - (b.timeout ? 1 : 0) || a.avg - b.avg)
       }
 
@@ -535,18 +538,21 @@ export default function NetworkPage() {
 
           {benchDone && benchResults.length > 0 && (() => {
             const best    = benchResults.find(r => !r.timeout)
+            const bestIsp = benchResults.find(r => !r.timeout && r.isp)
             const maxAvg  = Math.max(...benchResults.filter(r => !r.timeout).map(r => r.avg), 1)
+            const ispResults    = benchResults.filter(r => r.isp)
+            const publicResults = benchResults.filter(r => !r.isp)
 
             return (
               <div className="card p-5">
                 {/* destaque vencedor */}
                 {best && (
-                  <div className="flex items-center gap-3 p-3 rounded-xl mb-5 border border-[#00d4ff]/20 bg-[#00d4ff]/5">
+                  <div className="flex items-center gap-3 p-3 rounded-xl mb-4 border border-[#00d4ff]/20 bg-[#00d4ff]/5">
                     <span className="text-2xl">{best.flag}</span>
                     <div className="flex-1">
-                      <p className="text-xs text-[#00d4ff] font-semibold uppercase tracking-wider mb-0.5">Recomendado</p>
+                      <p className="text-xs text-[#00d4ff] font-semibold uppercase tracking-wider mb-0.5">🏆 Mais rápido</p>
                       <p className="text-white font-bold">{best.name} <span className="text-gray-400 font-normal text-sm">({best.ip})</span></p>
-                      <p className="text-xs text-gray-500 mt-0.5">Média {best.avg}ms · menor latência DNS na sua rede</p>
+                      <p className="text-xs text-gray-500 mt-0.5">Média {best.avg}ms · menor latência na sua rede</p>
                     </div>
                     <button
                       onClick={() => copyIp(best.ip)}
@@ -557,40 +563,96 @@ export default function NetworkPage() {
                   </div>
                 )}
 
-                {/* tabela ranking */}
+                {/* destaque DNS do provedor */}
+                {bestIsp && !bestIsp.timeout && (
+                  <div className="flex items-center gap-3 p-3 rounded-xl mb-5 border border-amber-500/20 bg-amber-500/5">
+                    <span className="text-2xl">{bestIsp.flag}</span>
+                    <div className="flex-1">
+                      <p className="text-xs text-amber-400 font-semibold uppercase tracking-wider mb-0.5">🏠 DNS do Provedor</p>
+                      <p className="text-white font-bold">{bestIsp.name} <span className="text-gray-400 font-normal text-sm">({bestIsp.ip})</span></p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        Média {bestIsp.avg}ms ·{' '}
+                        {best && !best.isp
+                          ? bestIsp.avg <= best.avg
+                            ? 'mais rápido que os DNS públicos'
+                            : `${bestIsp.avg - best.avg}ms mais lento que ${best.name}`
+                          : 'detectado automaticamente'
+                        }
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => copyIp(bestIsp.ip)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-amber-500/30 text-amber-400 hover:bg-amber-500/10 transition-all"
+                    >
+                      {copied === bestIsp.ip ? <><Check className="w-3 h-3" />Copiado!</> : <><Copy className="w-3 h-3" />Copiar IP</>}
+                    </button>
+                  </div>
+                )}
+
+                {/* DNS do provedor — ranking */}
+                {ispResults.length > 0 && (
+                  <>
+                    <p className="text-xs text-amber-400/70 font-semibold uppercase tracking-wider mb-2">DNS do Provedor (ISP)</p>
+                    <div className="space-y-2 mb-5">
+                      {ispResults.map(r => {
+                        const rank   = benchResults.indexOf(r)
+                        const barPct = r.timeout ? 100 : (r.avg / maxAvg) * 100
+                        const color  = r.timeout ? '#ff4d4d' : '#f59e0b'
+                        return (
+                          <div key={r.ip} className="group">
+                            <div className="flex items-center gap-3 mb-1">
+                              <span className="text-gray-600 text-xs w-4 text-right shrink-0">{rank + 1}</span>
+                              <span className="text-base shrink-0">{r.flag}</span>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm text-white font-medium truncate">{r.name}</span>
+                                  <span className="text-xs text-gray-600 mono shrink-0">{r.ip}</span>
+                                </div>
+                                <div className="relative h-1.5 bg-white/5 rounded-full mt-1.5 overflow-hidden">
+                                  <div className="absolute left-0 top-0 h-full rounded-full" style={{ width: `${barPct}%`, background: color }} />
+                                </div>
+                              </div>
+                              <div className="text-right shrink-0 w-20">
+                                {r.timeout ? <span className="text-xs text-red-400">Timeout</span>
+                                  : <span className="text-sm font-bold mono" style={{ color }}>{r.avg}<span className="text-gray-500 text-xs font-normal ml-0.5">ms</span></span>}
+                              </div>
+                              <button onClick={() => copyIp(r.ip)} className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-600 hover:text-amber-400" title="Copiar IP">
+                                {copied === r.ip ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </>
+                )}
+
+                {/* DNS públicos — ranking */}
+                <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-2">DNS Públicos</p>
                 <div className="space-y-2">
-                  {benchResults.map((r, i) => {
+                  {publicResults.map(r => {
+                    const rank   = benchResults.indexOf(r)
                     const barPct = r.timeout ? 100 : (r.avg / maxAvg) * 100
-                    const color  = r.timeout ? '#ff4d4d' : i === 0 ? '#00d4ff' : i < 3 ? '#00ff88' : i < 6 ? '#ffd700' : '#ff8800'
+                    const color  = r.timeout ? '#ff4d4d' : rank === 0 ? '#00d4ff' : rank < 3 ? '#00ff88' : rank < 6 ? '#ffd700' : '#ff8800'
                     return (
                       <div key={r.ip} className="group">
                         <div className="flex items-center gap-3 mb-1">
-                          <span className="text-gray-600 text-xs w-4 text-right shrink-0">{i + 1}</span>
+                          <span className="text-gray-600 text-xs w-4 text-right shrink-0">{rank + 1}</span>
                           <span className="text-base shrink-0">{r.flag}</span>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
                               <span className="text-sm text-white font-medium truncate">{r.name}</span>
                               <span className="text-xs text-gray-600 mono shrink-0">{r.ip}</span>
-                                            </div>
+                            </div>
                             <div className="relative h-1.5 bg-white/5 rounded-full mt-1.5 overflow-hidden">
-                              <div
-                                className="absolute left-0 top-0 h-full rounded-full transition-all"
-                                style={{ width: `${barPct}%`, background: color }}
-                              />
+                              <div className="absolute left-0 top-0 h-full rounded-full" style={{ width: `${barPct}%`, background: color }} />
                             </div>
                           </div>
                           <div className="text-right shrink-0 w-20">
-                            {r.timeout ? (
-                              <span className="text-xs text-red-400">Timeout</span>
-                            ) : (
-                              <span className="text-sm font-bold mono" style={{ color }}>{r.avg}<span className="text-gray-500 text-xs font-normal ml-0.5">ms</span></span>
-                            )}
+                            {r.timeout ? <span className="text-xs text-red-400">Timeout</span>
+                              : <span className="text-sm font-bold mono" style={{ color }}>{r.avg}<span className="text-gray-500 text-xs font-normal ml-0.5">ms</span></span>}
                           </div>
-                          <button
-                            onClick={() => copyIp(r.ip)}
-                            className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-600 hover:text-[#00d4ff]"
-                            title="Copiar IP"
-                          >
+                          <button onClick={() => copyIp(r.ip)} className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-600 hover:text-[#00d4ff]" title="Copiar IP">
                             {copied === r.ip ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
                           </button>
                         </div>
@@ -598,6 +660,10 @@ export default function NetworkPage() {
                     )
                   })}
                 </div>
+
+                {!benchIspFound && (
+                  <p className="text-xs text-amber-500/60 mt-3">⚠ DNS do provedor não detectado automaticamente — use o campo personalizado para adicioná-lo manualmente.</p>
+                )}
 
                 <p className="text-xs text-gray-600 mt-4 text-center">
                   Medido via ICMP ping (OS) · 5 amostras por servidor · mesma precisão do CMD
