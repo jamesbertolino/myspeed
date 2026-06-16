@@ -137,10 +137,9 @@ function getLocalSubnet(preferSubnet?: string): { subnet: string; localIp: strin
 
 async function isHostOnline(ip: string): Promise<boolean> {
   const PROBE_PORTS = [80, 443, 22, 8080, 8443, 21, 23, 3389, 53, 139, 445, 3306, 5900, 8888, 7547, 8181, 8000]
-  for (const port of PROBE_PORTS) {
-    if (await tcpProbe(ip, port, 500)) return true
-  }
-  return false
+  // testa todas as portas em paralelo — sequencial custava até 17 * 500ms = 8.5s por IP ausente
+  const results = await Promise.all(PROBE_PORTS.map(port => tcpProbe(ip, port, 500)))
+  return results.some(Boolean)
 }
 
 function ipMatchesSubnet(ip: string, subnet: string): boolean {
