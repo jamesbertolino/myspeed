@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { loadSettings } from '@/lib/settings'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart3, Gauge, Activity, Wifi, Server, Zap, Radio, Settings, Menu, X, Monitor, Shield, LogOut } from 'lucide-react'
+import { BarChart3, Gauge, Activity, Wifi, Server, Zap, Radio, Settings, Menu, X, Monitor, Shield, LogOut, History } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
 
@@ -16,6 +16,7 @@ const nav = [
   { href: '/devices', icon: Monitor, label: 'Dispositivos' },
   { href: '/controllers', icon: Server, label: 'Controladores' },
   { href: '/security', icon: Shield, label: 'Centro de Segurança' },
+  { href: '/history', icon: History, label: 'Histórico' },
 ]
 
 const navBottom = [
