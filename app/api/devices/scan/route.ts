@@ -184,7 +184,7 @@ export async function GET(req: NextRequest) {
     async start(controller) {
       const send = (obj: unknown) => {
         try {
-          controller.enqueue(encoder.encode(JSON.stringify(obj) + '\n'))
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`))
         } catch (_) {}
       }
 
@@ -235,9 +235,10 @@ export async function GET(req: NextRequest) {
 
   return new Response(stream, {
     headers: {
-      'Content-Type': 'application/x-ndjson',
-      'Cache-Control': 'no-cache, no-store',
-      'X-Content-Type-Options': 'nosniff',
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
     }
   })
 }

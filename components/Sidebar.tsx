@@ -289,13 +289,12 @@ function SidebarStatus() {
 
   const ping = useCallback(async () => {
     try {
-      const t0 = performance.now()
-      await fetch('https://speed.cloudflare.com/__down?bytes=0&_=' + Date.now(), {
-        cache: 'no-store', mode: 'no-cors',
-      })
-      const ms = Math.round(performance.now() - t0)
-      setLatency(ms)
-      setBeat(b => b + 1)
+      const res = await fetch(`/api/ping?target=1.1.1.1&_=${Date.now()}`, { cache: 'no-store' })
+      const data = await res.json()
+      if (typeof data.ms === 'number') {
+        setLatency(Math.round(data.ms))
+        setBeat(b => b + 1)
+      }
     } catch (_) {}
   }, [])
 
@@ -348,7 +347,7 @@ function SidebarStatus() {
         </div>
         <div className="flex justify-between text-[11px]">
           <span className="text-gray-500">Versão</span>
-          <span className="text-gray-400">v2.6.7</span>
+          <span className="text-gray-400">v2.6.9</span>
         </div>
       </div>
     </div>

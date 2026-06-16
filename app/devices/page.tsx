@@ -433,8 +433,9 @@ export default function DevicesPage() {
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split('\n')
         buffer = lines.pop() ?? ''
-        for (const line of lines) {
-          if (!line.trim()) continue
+        for (const raw of lines) {
+          const line = raw.replace(/^data:\s*/, '').trim()
+          if (!line) continue
           try { handleEvent(JSON.parse(line)) } catch (_) {}
         }
       }
