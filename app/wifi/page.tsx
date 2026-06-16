@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { Wifi, Plus, Trash2, Info, CheckCircle, AlertTriangle, Radio, ScanLine, RefreshCw, Puzzle, Sparkles, ShieldCheck, ShieldAlert, ShieldX, TrendingUp, Terminal, Smartphone, FileDown, Activity } from 'lucide-react'
 import WiFiChannelMap, { WiFiNetwork } from '@/components/WiFiChannelMap'
 import { NON_OVERLAPPING_24, NON_OVERLAPPING_5 } from '@/lib/utils'
@@ -36,6 +36,21 @@ const EXAMPLE_NETWORKS_5: WiFiNetwork[] = [
 // Penalidade de um canal = a PIOR interferência que ele sofre (não a soma de todas).
 // Isso favorece o canal mais distante do vizinho mais próximo/forte, em vez de somar
 // pequenas interferências de várias redes fracas e descartar erroneamente um canal livre.
+// Descarta redes "Hidden" que provavelmente são o mesmo roteador do usuário sendo
+// reportado duas vezes (ex: radio de backhaul/IoT do próprio AP, ou duplicidade do
+// scan) — mesma banda e canal de uma rede nomeada, com sinal quase idêntico (±3dBm).
+// Sem isso, a interferência do próprio canal é inflada por "fantasmas".
+function stripGhostHidden(networks: WiFiNetwork[]): WiFiNetwork[] {
+  const named = networks.filter(n => n.ssid && n.ssid !== 'Hidden')
+  return networks.filter(n => {
+    if (n.ssid !== 'Hidden') return true
+    const isGhost = named.some(m =>
+      m.band === n.band && m.channel === n.channel && Math.abs(m.signal - n.signal) <= 3
+    )
+    return !isGhost
+  })
+}
+
 function channelPenalty(networks: WiFiNetwork[], band: '2.4' | '5', ch: number): number {
   const threshold = band === '2.4' ? 5 : 4
   let worst = 0
@@ -222,13 +237,17 @@ export default function WiFiPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recommended24, recommended5])
 
+  // Remove duplicatas "Hidden" do próprio roteador antes de calcular interferência
+  const cleanNetworks = useMemo(() => stripGhostHidden(networks), [networks])
+  const ghostCount = networks.length - cleanNetworks.length
+
   // Recalcula a recomendação de canal com histerese (mantém o canal anterior se a
   // diferença for pequena), evitando que a sugestão troque a cada nova amostragem.
   useEffect(() => {
-    setRecommended24(prev => bestChannel(networks, '2.4', prev))
-    setRecommended5(prev => bestChannel(networks, '5', prev))
+    setRecommended24(prev => bestChannel(cleanNetworks, '2.4', prev))
+    setRecommended5(prev => bestChannel(cleanNetworks, '5', prev))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [networks])
+  }, [cleanNetworks])
 
   const currentBandNets = networks.filter(n => n.band === band)
   const recommended = band === '2.4' ? recommended24 : recommended5
@@ -269,7 +288,7 @@ export default function WiFiPage() {
 
   // Get channel interference score
   const getInterference = (ch: number): 'none' | 'low' | 'medium' | 'high' => {
-    const others = networks.filter(n => n.band === band && n.ssid !== currentBandNets[0]?.ssid)
+    const others = cleanNetworks.filter(n => n.band === band && n.ssid !== currentBandNets[0]?.ssid)
     const nearby = others.filter(n => Math.abs(n.channel - ch) < (band === '2.4' ? 5 : 4))
     if (nearby.length === 0) return 'none'
     if (nearby.length === 1) return 'low'
@@ -498,8 +517,8 @@ export default function WiFiPage() {
         {(() => {
           const mine = band === '2.4' ? myChannel24 : myChannel5
           if (mine == null) return null
-          const minePenalty = channelPenalty(networks, band, mine)
-          const recPenalty  = channelPenalty(networks, band, recommended)
+          const minePenalty = channelPenalty(cleanNetworks, band, mine)
+          const recPenalty  = channelPenalty(cleanNetworks, band, recommended)
           const sameChannel = mine === recommended
           return (
             <div className="flex items-center gap-3 mb-4 px-3 py-2 rounded-lg bg-[#0f1a35] border border-[#1a2744] text-xs flex-wrap">
@@ -522,6 +541,11 @@ export default function WiFiPage() {
             </div>
           )
         })()}
+        {ghostCount > 0 && (
+          <p className="text-[11px] text-gray-500 mb-3">
+            {ghostCount} rede{ghostCount > 1 ? 's' : ''} "Hidden" com sinal quase idêntico ao seu roteador foi{ghostCount > 1 ? 'ram' : ''} ignorada{ghostCount > 1 ? 's' : ''} no cálculo (provável duplicidade do próprio AP, não interferência real).
+          </p>
+        )}
         {/* ambos sempre no DOM — inativo posicionado fora da tela para o html2canvas conseguir capturar */}
         <div id="wifi-channel-map-24" style={band !== '2.4' ? { position: 'absolute', left: '-9999px', width: '900px' } : {}}>
           <WiFiChannelMap band="2.4" networks={networks} highlight={recommended24} />
