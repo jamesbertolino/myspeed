@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
-import { Wifi, Plus, Trash2, Info, CheckCircle, AlertTriangle, Radio, ScanLine, RefreshCw, Puzzle, Sparkles, ShieldCheck, ShieldAlert, ShieldX, TrendingUp, Terminal, Smartphone, FileDown } from 'lucide-react'
+import { Wifi, Plus, Trash2, Info, CheckCircle, AlertTriangle, Radio, ScanLine, RefreshCw, Puzzle, Sparkles, ShieldCheck, ShieldAlert, ShieldX, TrendingUp, Terminal, Smartphone, FileDown, Activity } from 'lucide-react'
 import WiFiChannelMap, { WiFiNetwork } from '@/components/WiFiChannelMap'
 import { NON_OVERLAPPING_24, NON_OVERLAPPING_5 } from '@/lib/utils'
 import clsx from 'clsx'
@@ -63,6 +63,8 @@ export default function WiFiPage() {
   const [aiAnalysis, setAiAnalysis] = useState<AIAnalysis | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [liveMode, setLiveMode] = useState(false)
+  const [lastUpdate, setLastUpdate] = useState<number | null>(null)
 
   // Detect Chrome extension
   useEffect(() => {
@@ -161,9 +163,19 @@ export default function WiFiPage() {
       setScanError('Erro ao escanear. Verifique se o agente local está rodando.')
     } finally {
       setScanning(false)
+      setLastUpdate(Date.now())
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentReady, extensionReady])
+
+  // Modo tempo real — re-escaneia periodicamente enquanto ativado
+  useEffect(() => {
+    if (!liveMode) return
+    const interval = setInterval(() => {
+      if (!scanning) scanNetworks()
+    }, 5000)
+    return () => clearInterval(interval)
+  }, [liveMode, scanning, scanNetworks])
 
   const runAIAnalysis = useCallback(async (nets: WiFiNetwork[]) => {
     setAnalyzing(true)
@@ -241,8 +253,22 @@ export default function WiFiPage() {
             {exporting ? 'Gerando...' : 'Exportar PDF'}
           </button>
           <button
+            onClick={() => setLiveMode(v => !v)}
+            disabled={!agentReady && !extensionReady}
+            className={clsx(
+              'px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 border transition-all disabled:opacity-40',
+              liveMode
+                ? 'bg-red-500/10 border-red-500/30 text-red-400'
+                : 'border-[#1a2744] text-gray-400 hover:text-white hover:bg-white/5'
+            )}
+            title={!agentReady && !extensionReady ? 'Disponível apenas com agente local ou extensão Chrome ativos' : ''}
+          >
+            <Activity className={clsx('w-4 h-4', liveMode && 'animate-pulse')} />
+            {liveMode ? 'Parar Tempo Real' : 'Tempo Real'}
+          </button>
+          <button
             onClick={scanNetworks}
-            disabled={scanning}
+            disabled={scanning || liveMode}
             className="btn-cyan px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 disabled:opacity-50"
           >
             {scanning
@@ -252,6 +278,14 @@ export default function WiFiPage() {
           </button>
         </div>
       </div>
+
+      {liveMode && (
+        <div className="mb-4 px-4 py-2 rounded-lg border border-red-500/20 bg-red-500/5 text-xs flex items-center gap-2 text-red-400">
+          <Activity className="w-3.5 h-3.5 animate-pulse" />
+          Modo tempo real ativo — re-escaneando a cada 5s
+          {lastUpdate && <span className="text-gray-500 ml-auto">Atualizado às {new Date(lastUpdate).toLocaleTimeString('pt-BR')}</span>}
+        </div>
+      )}
 
       {/* Status do scanner */}
       {agentReady ? (
