@@ -9,6 +9,7 @@ import LatencyChart from '@/components/LatencyChart'
 import StatCard from '@/components/StatCard'
 import { latencyColor, latencyLabel, calcJitter, jitterColor, jitterLabel, formatSpeed } from '@/lib/utils'
 import { loadSettings, AppSettings } from '@/lib/settings'
+import { checkAlerts, requestNotificationPermission } from '@/lib/alerts'
 import clsx from 'clsx'
 
 interface IfaceStats {
@@ -115,6 +116,11 @@ export default function Dashboard() {
       latencyHistory.current = [...latencyHistory.current.slice(-59), latency]
       setLatencyData(prev => [...prev.slice(-59), { t: Date.now(), latency }])
       if (latencyHistory.current.length >= 2) setJitter(calcJitter(latencyHistory.current))
+
+      // verificar limiares de alerta
+      const s = loadSettings()
+      const loss = sentPackets > 0 ? (lostPackets / sentPackets) * 100 : 0
+      checkAlerts(s.alerts, { pingMs: latency, packetLossPct: loss })
     } catch {
       setSentPackets(s => s + 1)
       setLostPackets(l => l + 1)
@@ -141,6 +147,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     startPing()
+    requestNotificationPermission()
     return () => { if (pingRef.current) clearInterval(pingRef.current) }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 

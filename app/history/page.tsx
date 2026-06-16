@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { Download, Upload, Activity, Trash2, RefreshCw, TrendingUp } from 'lucide-react'
+import { Download, Upload, Activity, Trash2, RefreshCw, TrendingUp, Bell } from 'lucide-react'
 import { formatSpeed, latencyColor, latencyLabel } from '@/lib/utils'
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from 'recharts'
 
@@ -22,24 +22,36 @@ interface PingRow {
   ttl?: number
 }
 
+interface AlertRow {
+  id: number
+  ts: number
+  type: string
+  value: number
+  threshold: number
+  message: string
+}
+
 function fmt(ts: number) {
   return new Date(ts).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
 export default function HistoryPage() {
-  const [speedRows, setSpeedRows] = useState<SpeedRow[]>([])
-  const [pingRows,  setPingRows]  = useState<PingRow[]>([])
-  const [loading,   setLoading]   = useState(true)
-  const [tab,       setTab]       = useState<'speedtest' | 'ping'>('speedtest')
+  const [speedRows,  setSpeedRows]  = useState<SpeedRow[]>([])
+  const [pingRows,   setPingRows]   = useState<PingRow[]>([])
+  const [alertRows,  setAlertRows]  = useState<AlertRow[]>([])
+  const [loading,    setLoading]    = useState(true)
+  const [tab,        setTab]        = useState<'speedtest' | 'ping' | 'alerts'>('speedtest')
 
   const load = useCallback(() => {
     setLoading(true)
     Promise.all([
       fetch('/api/history/speedtest?limit=100').then(r => r.json()),
       fetch('/api/history/ping?limit=200').then(r => r.json()),
-    ]).then(([sp, pg]) => {
+      fetch('/api/history/alerts?limit=100').then(r => r.json()),
+    ]).then(([sp, pg, al]) => {
       setSpeedRows(sp.rows ?? [])
       setPingRows((pg.rows ?? []).reverse())
+      setAlertRows(al.rows ?? [])
     }).finally(() => setLoading(false))
   }, [])
 
@@ -49,6 +61,12 @@ export default function HistoryPage() {
     if (!confirm('Apagar todo o histórico de speedtest?')) return
     await fetch('/api/history/speedtest', { method: 'DELETE' })
     setSpeedRows([])
+  }
+
+  const clearAlerts = async () => {
+    if (!confirm('Apagar todo o log de alertas?')) return
+    await fetch('/api/history/alerts', { method: 'DELETE' })
+    setAlertRows([])
   }
 
   const deleteRow = async (id: number) => {
@@ -80,10 +98,10 @@ export default function HistoryPage() {
 
       {/* tabs */}
       <div className="flex gap-2 mb-5">
-        {(['speedtest', 'ping'] as const).map(t => (
+        {(['speedtest', 'ping', 'alerts'] as const).map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${tab === t ? 'btn-cyan' : 'bg-white/5 text-gray-400 hover:bg-white/10'}`}>
-            {t === 'speedtest' ? 'Speedtest' : 'Ping / TTL'}
+            {t === 'speedtest' ? 'Speedtest' : t === 'ping' ? 'Ping / TTL' : `Alertas${alertRows.length ? ` (${alertRows.length})` : ''}`}
           </button>
         ))}
       </div>
@@ -177,6 +195,41 @@ export default function HistoryPage() {
         </>
       ) : (
         /* tab ping */
+        /* tab alerts */
+        tab === 'alerts' ? (
+        <div className="card p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-white">{alertRows.length} alertas registrados</h2>
+            {alertRows.length > 0 && (
+              <button onClick={clearAlerts} className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300 transition-colors">
+                <Trash2 className="w-3 h-3" />Limpar
+              </button>
+            )}
+          </div>
+          {alertRows.length === 0 ? (
+            <p className="text-gray-600 text-sm text-center py-8">Nenhum alerta registrado.</p>
+          ) : (
+            <div className="space-y-2">
+              {alertRows.map(r => {
+                const colors: Record<string, string> = { ping: '#ffd700', packet_loss: '#ff4d4d', download: '#00d4ff', upload: '#00ff88' }
+                const color = colors[r.type] ?? '#aaa'
+                return (
+                  <div key={r.id} className="flex items-start gap-3 px-3 py-2.5 rounded-lg bg-white/5">
+                    <Bell className="w-3.5 h-3.5 mt-0.5 shrink-0" style={{ color }} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-white">{r.message}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">{fmt(r.ts)}</p>
+                    </div>
+                    <span className="text-xs font-semibold mono shrink-0" style={{ color }}>
+                      {r.type.replace('_', ' ')}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+        ) : (
         <div className="card p-5">
           <h2 className="text-sm font-semibold text-white mb-4">{pingRows.length} amostras (últimas 24h)</h2>
           {pingRows.length > 1 ? (
@@ -193,6 +246,7 @@ export default function HistoryPage() {
             <p className="text-gray-600 text-sm text-center py-8">Aguardando amostras de ping...</p>
           )}
         </div>
+        )
       )}
     </div>
   )

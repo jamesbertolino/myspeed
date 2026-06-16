@@ -6,6 +6,8 @@ import SpeedGauge from '@/components/SpeedGauge'
 import ServerSelector from '@/components/ServerSelector'
 import { TestServer } from '@/lib/servers'
 import { formatSpeed, latencyColor, latencyLabel, calcJitter, jitterLabel } from '@/lib/utils'
+import { loadSettings } from '@/lib/settings'
+import { checkAlerts } from '@/lib/alerts'
 import clsx from 'clsx'
 
 type Phase = 'idle' | 'pretest' | 'ping' | 'download' | 'upload' | 'done'
@@ -339,6 +341,9 @@ export default function SpeedTestPage() {
       setResult(res)
       setHistory(prev => [res, ...prev.slice(0, 9)])
       setPhase('done')
+
+      // verifica alertas de velocidade
+      checkAlerts(loadSettings().alerts, { downloadMbps: res.download, uploadMbps: res.upload, pingMs: res.ping })
 
       // persiste no banco
       fetch('/api/history/speedtest', {

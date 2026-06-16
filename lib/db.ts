@@ -31,8 +31,18 @@ db.exec(`
     ttl  INTEGER
   );
 
+  CREATE TABLE IF NOT EXISTS alert_log (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts        INTEGER NOT NULL,
+    type      TEXT    NOT NULL,
+    value     REAL    NOT NULL,
+    threshold REAL    NOT NULL,
+    message   TEXT    NOT NULL
+  );
+
   CREATE INDEX IF NOT EXISTS idx_speedtest_ts ON speedtest_history(ts DESC);
   CREATE INDEX IF NOT EXISTS idx_ping_ts      ON ping_history(ts DESC);
+  CREATE INDEX IF NOT EXISTS idx_alert_ts     ON alert_log(ts DESC);
 `)
 
 export default db
