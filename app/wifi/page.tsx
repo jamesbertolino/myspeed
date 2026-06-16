@@ -233,6 +233,16 @@ export default function WiFiPage() {
   const currentBandNets = networks.filter(n => n.band === band)
   const recommended = band === '2.4' ? recommended24 : recommended5
 
+  // Canal "atual": a rede com sinal mais forte na banda é, na prática, o roteador do
+  // próprio usuário (a um clique de distância do dispositivo que está escaneando).
+  const myChannel = (b: '2.4' | '5'): number | null => {
+    const nets = networks.filter(n => n.band === b)
+    if (!nets.length) return null
+    return nets.reduce((strongest, n) => n.signal > strongest.signal ? n : strongest, nets[0]).channel
+  }
+  const myChannel24 = myChannel('2.4')
+  const myChannel5  = myChannel('5')
+
   const handleExportPdf = async () => {
     setExporting(true)
     try {
@@ -484,6 +494,34 @@ export default function WiFiPage() {
             <span className="tag tag-green">CH {recommended}</span>
           </div>
         </div>
+
+        {(() => {
+          const mine = band === '2.4' ? myChannel24 : myChannel5
+          if (mine == null) return null
+          const minePenalty = channelPenalty(networks, band, mine)
+          const recPenalty  = channelPenalty(networks, band, recommended)
+          const sameChannel = mine === recommended
+          return (
+            <div className="flex items-center gap-3 mb-4 px-3 py-2 rounded-lg bg-[#0f1a35] border border-[#1a2744] text-xs flex-wrap">
+              <span className="text-gray-500">Seu canal atual (sinal mais forte):</span>
+              <span className={clsx('font-mono font-bold', minePenalty > 30 ? 'text-red-400' : minePenalty > 5 ? 'text-yellow-400' : 'text-green-400')}>
+                CH {mine}
+              </span>
+              <span className="text-gray-600">·</span>
+              <span className="text-gray-500">interferência: {minePenalty.toFixed(0)}</span>
+              {!sameChannel && (
+                <>
+                  <span className="text-gray-600 mx-1">→</span>
+                  <span className="text-gray-500">recomendado:</span>
+                  <span className="font-mono font-bold text-[#00ff88]">CH {recommended}</span>
+                  <span className="text-gray-600">·</span>
+                  <span className="text-gray-500">interferência: {recPenalty.toFixed(0)}</span>
+                </>
+              )}
+              {sameChannel && <span className="tag tag-green ml-auto">Você já está no melhor canal</span>}
+            </div>
+          )
+        })()}
         {/* ambos sempre no DOM — inativo posicionado fora da tela para o html2canvas conseguir capturar */}
         <div id="wifi-channel-map-24" style={band !== '2.4' ? { position: 'absolute', left: '-9999px', width: '900px' } : {}}>
           <WiFiChannelMap band="2.4" networks={networks} highlight={recommended24} />
