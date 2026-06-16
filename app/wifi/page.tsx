@@ -33,18 +33,39 @@ const EXAMPLE_NETWORKS_5: WiFiNetwork[] = [
   { ssid: 'Office_5G', channel: 149, signal: -68, band: '5', width: 80 },
 ]
 
-function bestChannel(networks: WiFiNetwork[], band: '2.4' | '5'): number {
-  const candidates = band === '2.4' ? NON_OVERLAPPING_24 : NON_OVERLAPPING_5
-  const scores: Record<number, number> = {}
-  candidates.forEach(ch => { scores[ch] = 0 })
+// Penalidade de um canal = a PIOR interferência que ele sofre (não a soma de todas).
+// Isso favorece o canal mais distante do vizinho mais próximo/forte, em vez de somar
+// pequenas interferências de várias redes fracas e descartar erroneamente um canal livre.
+function channelPenalty(networks: WiFiNetwork[], band: '2.4' | '5', ch: number): number {
+  const threshold = band === '2.4' ? 5 : 4
+  let worst = 0
   networks.filter(n => n.band === band).forEach(n => {
-    candidates.forEach(ch => {
-      const dist = Math.abs(n.channel - ch)
-      if (band === '2.4' && dist < 5) scores[ch] -= Math.max(0, 100 + n.signal) * (1 - dist / 5)
-      else if (band === '5' && dist < 4) scores[ch] -= Math.max(0, 100 + n.signal) * 0.5
-    })
+    const dist = Math.abs(n.channel - ch)
+    if (dist >= threshold) return
+    // sinal arredondado em buckets de 3dBm para não oscilar por ruído de amostragem
+    const signalBucket = Math.round(n.signal / 3) * 3
+    const strength = Math.max(0, 100 + signalBucket)
+    const penalty = strength * (1 - dist / threshold)
+    if (penalty > worst) worst = penalty
   })
-  return candidates.reduce((best, ch) => scores[ch] > scores[best] ? ch : best, candidates[0])
+  return worst
+}
+
+// `prevChannel` aplica histerese: só troca de recomendação se o novo canal for
+// claramente melhor (margem de 15%), evitando a IA sugerir um canal diferente
+// a cada amostragem por flutuações mínimas de sinal.
+function bestChannel(networks: WiFiNetwork[], band: '2.4' | '5', prevChannel?: number): number {
+  const candidates = band === '2.4' ? NON_OVERLAPPING_24 : NON_OVERLAPPING_5
+  const best = candidates.reduce((best, ch) =>
+    channelPenalty(networks, band, ch) < channelPenalty(networks, band, best) ? ch : best,
+    candidates[0]
+  )
+  if (prevChannel != null && candidates.includes(prevChannel)) {
+    const prevPenalty = channelPenalty(networks, band, prevChannel)
+    const bestPenalty = channelPenalty(networks, band, best)
+    if (prevPenalty <= bestPenalty * 1.15) return prevChannel
+  }
+  return best
 }
 
 const AGENT_PORT = 7474
@@ -65,6 +86,8 @@ export default function WiFiPage() {
   const [exporting, setExporting] = useState(false)
   const [liveMode, setLiveMode] = useState(false)
   const [lastUpdate, setLastUpdate] = useState<number | null>(null)
+  const [recommended24, setRecommended24] = useState<number>(NON_OVERLAPPING_24[0])
+  const [recommended5, setRecommended5] = useState<number>(NON_OVERLAPPING_5[0])
 
   // Detect Chrome extension
   useEffect(() => {
@@ -184,15 +207,31 @@ export default function WiFiPage() {
         body: JSON.stringify({ networks: nets }),
       })
       const data = await res.json()
-      if (data.analysis) setAiAnalysis(data.analysis)
+      if (data.analysis) {
+        // A IA é não-determinística na escolha de canal (varia entre chamadas com a
+        // mesma amostra). Sobrescreve com o cálculo local determinístico + histerese,
+        // mantendo da IA apenas o texto (resumo, recomendações, segurança).
+        setAiAnalysis({
+          ...data.analysis,
+          bestChannel24: recommended24,
+          bestChannel5: recommended5,
+        })
+      }
     } catch { /* análise silenciosa — não bloqueia o scan */ }
     finally { setAnalyzing(false) }
-  }, [])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recommended24, recommended5])
+
+  // Recalcula a recomendação de canal com histerese (mantém o canal anterior se a
+  // diferença for pequena), evitando que a sugestão troque a cada nova amostragem.
+  useEffect(() => {
+    setRecommended24(prev => bestChannel(networks, '2.4', prev))
+    setRecommended5(prev => bestChannel(networks, '5', prev))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [networks])
 
   const currentBandNets = networks.filter(n => n.band === band)
-  const recommended = bestChannel(networks, band)
-  const recommended24 = bestChannel(networks, '2.4')
-  const recommended5  = bestChannel(networks, '5')
+  const recommended = band === '2.4' ? recommended24 : recommended5
 
   const handleExportPdf = async () => {
     setExporting(true)
