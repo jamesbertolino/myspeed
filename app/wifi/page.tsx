@@ -129,7 +129,6 @@ export default function WiFiPage() {
         if (nets) {
           setNetworks(nets)
           setIsRealData(true)
-          runAIAnalysis(nets)
           return
         }
         setScanError('Agente respondeu mas não encontrou redes. Verifique se o WiFi está ativo.')
@@ -142,7 +141,6 @@ export default function WiFiPage() {
         if (extNetworks) {
           setNetworks(extNetworks)
           setIsRealData(true)
-          runAIAnalysis(extNetworks)
           return
         }
       }
@@ -155,7 +153,6 @@ export default function WiFiPage() {
       } else if (data.networks?.length > 0) {
         setNetworks(data.networks)
         setIsRealData(true)
-        runAIAnalysis(data.networks)
       } else {
         setScanError('Nenhuma rede encontrada. Inicie o agente local ou a extensão Chrome.')
       }
@@ -242,6 +239,16 @@ export default function WiFiPage() {
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
+          <button
+            onClick={() => runAIAnalysis(networks)}
+            disabled={analyzing || networks.length === 0}
+            className="px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 border border-purple-500/30 text-purple-400 hover:bg-purple-500/10 transition-all disabled:opacity-40"
+          >
+            {analyzing
+              ? <RefreshCw className="w-4 h-4 animate-spin" />
+              : <Sparkles className="w-4 h-4" />}
+            {analyzing ? 'Analisando...' : 'Analisar IA'}
+          </button>
           <button
             onClick={handleExportPdf}
             disabled={exporting || networks.length === 0}
