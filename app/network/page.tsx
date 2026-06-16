@@ -600,7 +600,7 @@ export default function NetworkPage() {
                 </div>
 
                 <p className="text-xs text-gray-600 mt-4 text-center">
-                  Medido via UDP DNS (equivalente ao nslookup) · 3 domínios por servidor · menor valor = mais rápido para sua rede
+                  Medido via UDP raw (porta 53) · 5 amostras por servidor · equivalente ao nslookup no CMD
                 </p>
               </div>
             )
