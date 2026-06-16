@@ -552,7 +552,7 @@ export default function NetworkPage() {
                     <div className="flex-1">
                       <p className="text-xs text-[#00d4ff] font-semibold uppercase tracking-wider mb-0.5">🏆 Mais rápido</p>
                       <p className="text-white font-bold">{best.name} <span className="text-gray-400 font-normal text-sm">({best.ip})</span></p>
-                      <p className="text-xs text-gray-500 mt-0.5">Média {best.avg}ms · menor latência na sua rede</p>
+                      <p className="text-xs text-gray-500 mt-0.5">Média {best.avg.toFixed(1)}ms · menor latência na sua rede</p>
                     </div>
                     <button
                       onClick={() => copyIp(best.ip)}
@@ -571,11 +571,11 @@ export default function NetworkPage() {
                       <p className="text-xs text-amber-400 font-semibold uppercase tracking-wider mb-0.5">🏠 DNS do Provedor</p>
                       <p className="text-white font-bold">{bestIsp.name} <span className="text-gray-400 font-normal text-sm">({bestIsp.ip})</span></p>
                       <p className="text-xs text-gray-500 mt-0.5">
-                        Média {bestIsp.avg}ms ·{' '}
+                        Média {bestIsp.avg.toFixed(1)}ms ·{' '}
                         {best && !best.isp
                           ? bestIsp.avg <= best.avg
                             ? 'mais rápido que os DNS públicos'
-                            : `${bestIsp.avg - best.avg}ms mais lento que ${best.name}`
+                            : `${(bestIsp.avg - best.avg).toFixed(1)}ms mais lento que ${best.name}`
                           : 'detectado automaticamente'
                         }
                       </p>
@@ -614,7 +614,7 @@ export default function NetworkPage() {
                               </div>
                               <div className="text-right shrink-0 w-20">
                                 {r.timeout ? <span className="text-xs text-red-400">Timeout</span>
-                                  : <span className="text-sm font-bold mono" style={{ color }}>{r.avg}<span className="text-gray-500 text-xs font-normal ml-0.5">ms</span></span>}
+                                  : <span className="text-sm font-bold mono" style={{ color }}>{r.avg.toFixed(1)}<span className="text-gray-500 text-xs font-normal ml-0.5">ms</span></span>}
                               </div>
                               <button onClick={() => copyIp(r.ip)} className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-600 hover:text-amber-400" title="Copiar IP">
                                 {copied === r.ip ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -650,7 +650,7 @@ export default function NetworkPage() {
                           </div>
                           <div className="text-right shrink-0 w-20">
                             {r.timeout ? <span className="text-xs text-red-400">Timeout</span>
-                              : <span className="text-sm font-bold mono" style={{ color }}>{r.avg}<span className="text-gray-500 text-xs font-normal ml-0.5">ms</span></span>}
+                              : <span className="text-sm font-bold mono" style={{ color }}>{r.avg.toFixed(1)}<span className="text-gray-500 text-xs font-normal ml-0.5">ms</span></span>}
                           </div>
                           <button onClick={() => copyIp(r.ip)} className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-600 hover:text-[#00d4ff]" title="Copiar IP">
                             {copied === r.ip ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}

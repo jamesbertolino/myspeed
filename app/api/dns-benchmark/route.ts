@@ -88,7 +88,7 @@ async function icmpPing(ip: string): Promise<{ avg: number; samples: number[]; t
     const samples = matches.map(m => Math.round(parseFloat(m[1])))
     if (samples.length === 0) return { avg: -1, samples: [], timeout: true }
 
-    const avg = Math.round(samples.reduce((a, b) => a + b, 0) / samples.length)
+    const avg = Math.round(samples.reduce((a, b) => a + b, 0) / samples.length * 10) / 10
     return { avg, samples, timeout: false }
   } catch {
     return { avg: -1, samples: [], timeout: true }
