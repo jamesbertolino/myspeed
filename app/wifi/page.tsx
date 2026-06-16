@@ -60,23 +60,27 @@ function sameDeviceAs(hidden: WiFiNetwork, named: WiFiNetwork[]): string | null 
   return match?.ssid ?? null
 }
 
-// Descarta redes "Hidden" que provavelmente são o mesmo roteador do usuário sendo
-// reportado duas vezes — detectado por:
-//   1. MAC prefix idêntico a uma rede nomeada (mesma banda + canal): mais confiável
-//   2. Sinal quase idêntico (±3dBm) + mesma banda e canal: fallback quando sem BSSID
-// Redes hidden do mesmo equipamento mas em canal DIFERENTE ainda interferem de verdade,
-// logo são mantidas no cálculo (só o mesmo canal é duplicidade pura).
+// Descarta redes "Hidden" que são o mesmo equipamento que uma rede nomeada:
+//   1. MAC prefix idêntico (5 bytes) — qualquer canal: mesmo hardware, SEMPRE excluir
+//   2. Sinal quase idêntico (±3dBm) no mesmo canal/banda sem BSSID — fallback
+// Antes excluíamos apenas quando o canal era igual. Agora: se o MAC bate, é o mesmo
+// roteador emitindo num SSID oculto em canal diferente (ex: radio IoT/backhaul) —
+// não é vizinho, não deve penalizar nenhum canal.
 function stripGhostHidden(networks: WiFiNetwork[]): WiFiNetwork[] {
   const named = networks.filter(n => n.ssid && n.ssid !== 'Hidden')
   return networks.filter(n => {
     if (n.ssid !== 'Hidden') return true
-    const isGhost = named.some(m => m.band === n.band && m.channel === n.channel && (
-      sameMacPrefix(m.bssid, n.bssid) ||
-      (Math.abs(m.signal - n.signal) <= 3)
+    const isGhost = named.some(m => m.band === n.band && (
+      sameMacPrefix(m.bssid, n.bssid) ||                                    // mesmo hardware, qualquer canal
+      (m.channel === n.channel && Math.abs(m.signal - n.signal) <= 3)       // mesmo canal + sinal idêntico (sem BSSID)
     ))
     return !isGhost
   })
 }
+
+// Limiar abaixo do qual o sinal é considerado ruído de fundo.
+// -82dBm: força bruta = 18/100 — na prática irrelevante para decisão de canal.
+const NOISE_FLOOR_DBM = -82
 
 function channelPenalty(networks: WiFiNetwork[], band: '2.4' | '5', ch: number): number {
   const threshold = band === '2.4' ? 5 : 4
@@ -84,6 +88,8 @@ function channelPenalty(networks: WiFiNetwork[], band: '2.4' | '5', ch: number):
   networks.filter(n => n.band === band).forEach(n => {
     const dist = Math.abs(n.channel - ch)
     if (dist >= threshold) return
+    // Sinais abaixo do noise floor são descartados — interferência insignificante
+    if (n.signal < NOISE_FLOOR_DBM) return
     // sinal arredondado em buckets de 3dBm para não oscilar por ruído de amostragem
     const signalBucket = Math.round(n.signal / 3) * 3
     const strength = Math.max(0, 100 + signalBucket)
