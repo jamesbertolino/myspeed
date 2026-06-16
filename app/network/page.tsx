@@ -88,7 +88,10 @@ export default function NetworkPage() {
   const [traceTarget, setTraceTarget] = useState('8.8.8.8')
   const [traceHops, setTraceHops] = useState<TraceHop[]>([])
   const [traceLoading, setTraceLoading] = useState(false)
+  const [traceDone, setTraceDone] = useState(false)
   const [traceError, setTraceError] = useState('')
+  const traceLiveRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map())
+  const traceAbortRef = useRef<AbortController | null>(null)
 
   // DNS Benchmark state
   const [benchResults,  setBenchResults]  = useState<BenchResult[]>([])
@@ -149,21 +152,83 @@ export default function NetworkPage() {
 
   useEffect(() => () => { if (pingRef.current) clearInterval(pingRef.current) }, [])
 
+  const stopTrace = () => {
+    traceAbortRef.current?.abort()
+    traceLiveRef.current.forEach(t => clearInterval(t))
+    traceLiveRef.current.clear()
+    setTraceLoading(false)
+  }
+
+  const startLivePing = (ip: string) => {
+    if (ip === '*' || traceLiveRef.current.has(ip)) return
+    const tick = async () => {
+      try {
+        const r = await fetch(`/api/ping?target=${ip}`)
+        const d = await r.json()
+        if (d.ms >= 0) {
+          setTraceHops(prev => prev.map(h =>
+            h.ip === ip ? { ...h, latency: d.ms, timeout: false } : h
+          ))
+        } else {
+          setTraceHops(prev => prev.map(h =>
+            h.ip === ip ? { ...h, timeout: true } : h
+          ))
+        }
+      } catch { /* ignore */ }
+    }
+    tick()
+    traceLiveRef.current.set(ip, setInterval(tick, 1500))
+  }
+
   const runTraceroute = async () => {
-    setTraceLoading(true)
+    stopTrace()
     setTraceHops([])
     setTraceError('')
+    setTraceDone(false)
+    setTraceLoading(true)
+
+    const ctrl = new AbortController()
+    traceAbortRef.current = ctrl
+
     try {
-      const res = await fetch(`/api/traceroute?target=${encodeURIComponent(traceTarget)}`)
-      const data = await res.json()
-      setTraceHops(data.hops || [])
-      if (data.error) setTraceError(data.error)
-    } catch {
-      setTraceError('Falha ao executar traceroute')
+      const res = await fetch(`/api/traceroute?target=${encodeURIComponent(traceTarget)}`, { signal: ctrl.signal })
+      if (!res.body) throw new Error('Sem resposta do servidor')
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const parts = buf.split('\n\n')
+        buf = parts.pop() ?? ''
+        for (const part of parts) {
+          const line = part.replace(/^data: /, '').trim()
+          if (!line) continue
+          try {
+            const obj = JSON.parse(line)
+            if (obj.done) { setTraceDone(true); setTraceLoading(false) }
+            else if (obj.error) { setTraceError(obj.error); setTraceLoading(false) }
+            else {
+              setTraceHops(prev => {
+                const exists = prev.find(h => h.hop === obj.hop)
+                return exists ? prev.map(h => h.hop === obj.hop ? obj : h) : [...prev, obj]
+              })
+              startLivePing(obj.ip)
+            }
+          } catch { /* ignore parse errors */ }
+        }
+      }
+    } catch (e: unknown) {
+      if (e instanceof Error && e.name !== 'AbortError') setTraceError(e.message)
     } finally {
       setTraceLoading(false)
     }
   }
+
+  useEffect(() => () => stopTrace(), [])
 
   const runBenchmark = async () => {
     setBenchLoading(true)
@@ -381,6 +446,7 @@ export default function NetworkPage() {
       {/* TRACEROUTE TAB */}
       {tab === 'traceroute' && (
         <div className="space-y-4">
+          {/* controls */}
           <div className="card p-4 flex flex-wrap items-end gap-4">
             <div className="flex-1 min-w-48">
               <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">Destino</label>
@@ -389,76 +455,109 @@ export default function NetworkPage() {
                 value={traceTarget}
                 onChange={e => setTraceTarget(e.target.value)}
                 placeholder="IP ou domínio (ex: 8.8.8.8)"
-                onKeyDown={e => e.key === 'Enter' && runTraceroute()}
+                onKeyDown={e => e.key === 'Enter' && !traceLoading && runTraceroute()}
               />
             </div>
-            <button
-              onClick={runTraceroute}
-              disabled={traceLoading}
-              className="btn-cyan px-5 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 disabled:opacity-50"
-            >
-              {traceLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-              {traceLoading ? 'Rastreando...' : 'Rastrear'}
-            </button>
+            {traceLoading ? (
+              <button onClick={stopTrace} className="btn-purple px-5 py-2 rounded-lg font-semibold text-sm flex items-center gap-2">
+                <Square className="w-4 h-4" />Parar
+              </button>
+            ) : (
+              <button onClick={runTraceroute} className="btn-cyan px-5 py-2 rounded-lg font-semibold text-sm flex items-center gap-2">
+                <Search className="w-4 h-4" />Rastrear
+              </button>
+            )}
           </div>
 
           {traceError && (
             <div className="flex items-center gap-2 text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-2">
-              <AlertTriangle className="w-4 h-4 shrink-0" />
-              {traceError}
+              <AlertTriangle className="w-4 h-4 shrink-0" />{traceError}
             </div>
           )}
 
-          <div className="card overflow-x-auto">
+          <div className="card overflow-hidden">
             {traceHops.length === 0 && !traceLoading ? (
               <div className="p-8 text-center text-gray-600 text-sm">
                 <Network className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                Execute o traceroute para ver os saltos
+                Execute o traceroute para ver os saltos em tempo real
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <div className="min-w-[480px]">
+              <>
+                {/* header */}
                 <div className="px-4 py-3 border-b border-[#1a2744] grid grid-cols-12 text-xs text-gray-500 uppercase tracking-wider font-semibold">
                   <span className="col-span-1">#</span>
-                  <span className="col-span-4">Host</span>
-                  <span className="col-span-3">IP</span>
-                  <span className="col-span-2 text-right">Latência</span>
-                  <span className="col-span-2 text-right">Status</span>
+                  <span className="col-span-4">Host / IP</span>
+                  <span className="col-span-3 text-right">Ping ao vivo</span>
+                  <span className="col-span-4 text-right">Status</span>
                 </div>
-                {traceHops.map((hop, i) => (
-                  <div
-                    key={i}
-                    className="px-4 py-3 border-b border-[#1a2744]/50 grid grid-cols-12 text-sm items-center hover:bg-white/2"
-                  >
-                    <span className="col-span-1 text-gray-600 mono">{hop.hop}</span>
-                    <span className="col-span-4 text-gray-300 truncate font-medium">{hop.host}</span>
-                    <span className="col-span-3 text-gray-500 mono text-xs">{hop.ip !== hop.host ? hop.ip : ''}</span>
-                    <span className="col-span-2 text-right mono" style={{ color: hop.latency ? latencyColor(hop.latency) : '#4a5568' }}>
-                      {hop.latency ? `${hop.latency.toFixed(1)}ms` : '—'}
-                    </span>
-                    <div className="col-span-2 flex justify-end">
-                      {hop.timeout ? (
-                        <span className="tag tag-red">Timeout</span>
-                      ) : (
-                        <span className="tag" style={{
-                          background: `${hop.latency ? latencyColor(hop.latency) : '#4a5568'}15`,
-                          color: hop.latency ? latencyColor(hop.latency) : '#4a5568',
-                          border: `1px solid ${hop.latency ? latencyColor(hop.latency) : '#4a5568'}30`,
-                        }}>
-                          {hop.latency ? latencyLabel(hop.latency) : 'OK'}
-                        </span>
-                      )}
+
+                {traceHops.map((hop) => {
+                  const color = hop.timeout ? '#4a5568' : hop.latency ? latencyColor(hop.latency) : '#4a5568'
+                  const isLive = traceDone && !hop.timeout && hop.ip !== '*'
+                  return (
+                    <div key={hop.hop} className="px-4 py-2.5 border-b border-[#1a2744]/40 grid grid-cols-12 text-sm items-center hover:bg-white/[0.02] transition-colors">
+                      <span className="col-span-1 text-gray-600 mono text-xs">{hop.hop}</span>
+
+                      <div className="col-span-4 min-w-0 pr-2">
+                        {hop.timeout ? (
+                          <span className="text-gray-600">* * *</span>
+                        ) : (
+                          <>
+                            <p className="text-gray-200 mono text-xs truncate">{hop.ip}</p>
+                            {hop.host !== hop.ip && <p className="text-gray-600 text-[10px] truncate">{hop.host}</p>}
+                          </>
+                        )}
+                      </div>
+
+                      <div className="col-span-3 text-right">
+                        {hop.timeout ? (
+                          <span className="text-gray-700 mono text-xs">—</span>
+                        ) : (
+                          <span className="font-bold mono text-sm transition-all duration-300" style={{ color }}>
+                            {hop.latency != null ? `${hop.latency} ms` : '…'}
+                            {isLive && <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-current opacity-70 animate-pulse" />}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="col-span-4 flex justify-end">
+                        {hop.timeout ? (
+                          <span className="tag tag-red text-[10px]">Sem resposta</span>
+                        ) : hop.latency == null ? (
+                          <span className="flex items-center gap-1 text-xs text-gray-600">
+                            <Loader2 className="w-3 h-3 animate-spin" />medindo
+                          </span>
+                        ) : (
+                          <span className="tag text-[10px]" style={{
+                            background: `${color}15`, color, border: `1px solid ${color}30`
+                          }}>
+                            {latencyLabel(hop.latency)}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
+
+                {/* scanning row */}
                 {traceLoading && (
-                  <div className="px-4 py-3 flex items-center gap-2 text-gray-500 text-sm">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Descobrindo próximo salto...
+                  <div className="px-4 py-3 flex items-center gap-2 text-gray-600 text-xs border-b border-[#1a2744]/40">
+                    <span className="flex gap-0.5">
+                      <span className="w-1 h-1 rounded-full bg-[#00d4ff] animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <span className="w-1 h-1 rounded-full bg-[#00d4ff] animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <span className="w-1 h-1 rounded-full bg-[#00d4ff] animate-bounce" style={{ animationDelay: '300ms' }} />
+                    </span>
+                    Descobrindo próximo salto…
                   </div>
                 )}
-                </div>
-              </div>
+
+                {traceDone && (
+                  <div className="px-4 py-2.5 text-xs text-gray-600 flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#00ff88] animate-pulse" />
+                    {traceHops.filter(h => !h.timeout).length} saltos ativos · ping ao vivo a cada 1.5s
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
