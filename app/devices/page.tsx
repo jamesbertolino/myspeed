@@ -297,6 +297,10 @@ export default function DevicesPage() {
   const [scannedCount, setScannedCount] = useState(0)
   const [scanError, setScanError] = useState<string | null>(null)
   const [elapsed, setElapsed] = useState<number | null>(null)
+  const [currentIp, setCurrentIp] = useState<string | null>(null)
+  const [probeIndex, setProbeIndex] = useState(0)
+  const [probeTotal, setProbeTotal] = useState(254)
+  const [scanPhase, setScanPhase] = useState<'idle' | 'discovery' | 'ports'>('idle')
   const [aiAnalysis, setAiAnalysis] = useState<AIAnalysis | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [analyzeError, setAnalyzeError] = useState<string | null>(null)
@@ -355,10 +359,19 @@ export default function DevicesPage() {
     switch (event.type) {
       case 'progress':
         setProgressMsg(event.message as string)
+        setScanPhase('discovery')
+        if (event.total) setProbeTotal(event.total as number)
+        break
+      case 'scanning':
+        setCurrentIp(event.ip as string)
+        setProbeIndex(event.index as number)
+        setProbeTotal(event.total as number)
         break
       case 'hosts':
         setTotalHosts(event.count as number)
         setProgressMsg(null)
+        setCurrentIp(null)
+        setScanPhase('ports')
         break
       case 'device':
         setDevices(prev => [...prev, event.device as Device])
@@ -366,6 +379,8 @@ export default function DevicesPage() {
         break
       case 'done':
         setElapsed(event.elapsed as number)
+        setScanPhase('idle')
+        setCurrentIp(null)
         break
     }
   }, [])
@@ -385,6 +400,9 @@ export default function DevicesPage() {
     setElapsed(null)
     setAiAnalysis(null)
     setAnalyzeError(null)
+    setCurrentIp(null)
+    setProbeIndex(0)
+    setScanPhase('idle')
 
     let url: string
     let res: Response
@@ -670,25 +688,62 @@ export default function DevicesPage() {
       {/* Progress */}
       {scanning && (
         <div className="card space-y-3">
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-400">
-              {progressMsg || (totalHosts !== null
-                ? `Escaneando portas: ${scannedCount} / ${totalHosts} dispositivos`
-                : 'Descobrindo dispositivos...')}
-            </span>
-            {totalHosts !== null && (
-              <span className="text-cyan-400 font-mono">{progress}%</span>
+          {/* fase + label */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className={clsx(
+                'w-2 h-2 rounded-full shrink-0 animate-pulse',
+                scanPhase === 'discovery' ? 'bg-cyan-400' : 'bg-purple-400'
+              )} />
+              <span className="text-sm text-gray-300 font-medium">
+                {scanPhase === 'ports'
+                  ? `Analisando portas: ${scannedCount} / ${totalHosts} dispositivos`
+                  : 'Fase 1 — Descoberta de hosts'}
+              </span>
+            </div>
+            {scanPhase === 'ports' && totalHosts != null && (
+              <span className="text-cyan-400 font-mono text-sm shrink-0">{progress}%</span>
+            )}
+            {scanPhase === 'discovery' && (
+              <span className="text-cyan-400 font-mono text-xs shrink-0">
+                {probeIndex} / {probeTotal}
+              </span>
             )}
           </div>
+
+          {/* barra de progresso */}
           <div className="w-full h-1.5 bg-[#1a2744] rounded-full overflow-hidden">
-            <div
-              className="h-full bg-gradient-to-r from-cyan-500 to-purple-500 rounded-full transition-all duration-500"
-              style={{ width: totalHosts ? `${progress}%` : '0%' }}
-            />
+            {scanPhase === 'discovery' ? (
+              <div
+                className="h-full bg-gradient-to-r from-cyan-500 to-cyan-300 rounded-full transition-all duration-100"
+                style={{ width: `${Math.round((probeIndex / probeTotal) * 100)}%` }}
+              />
+            ) : (
+              <div
+                className="h-full bg-gradient-to-r from-cyan-500 to-purple-500 rounded-full transition-all duration-500"
+                style={{ width: totalHosts ? `${progress}%` : '0%' }}
+              />
+            )}
           </div>
-          {devices.length > 0 && (
+
+          {/* IP atual sendo sondado */}
+          {scanPhase === 'discovery' && currentIp && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#050a1a] border border-cyan-500/20">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping shrink-0" />
+              <span className="text-xs text-gray-500">Sondando:</span>
+              <span className="font-mono text-sm text-cyan-300 font-semibold tracking-wider">{currentIp}</span>
+              {devices.length > 0 && (
+                <span className="ml-auto text-xs text-green-400 font-medium">
+                  {devices.length} online
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* fase de portas — dispositivos encontrados */}
+          {scanPhase === 'ports' && devices.length > 0 && (
             <p className="text-xs text-gray-500">
-              {devices.length} dispositivo{devices.length !== 1 ? 's' : ''} encontrado{devices.length !== 1 ? 's' : ''} até agora...
+              {devices.length} dispositivo{devices.length !== 1 ? 's' : ''} encontrado{devices.length !== 1 ? 's' : ''} · analisando portas abertas…
             </p>
           )}
         </div>

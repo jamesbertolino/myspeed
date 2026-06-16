@@ -150,17 +150,19 @@ function ipMatchesSubnet(ip: string, subnet: string): boolean {
 async function discoverSubnet(
   subnet: string,
   arpHosts: Map<string, string | null>,
-  onFound: (ip: string) => void
+  onFound: (ip: string) => void,
+  onProbing?: (ip: string, index: number, total: number) => void,
 ): Promise<void> {
-  // Sempre inclui o gateway
   const gateway = `${subnet}.1`
   if (!arpHosts.has(gateway)) arpHosts.set(gateway, null)
 
   const allIps: string[] = []
   for (let i = 1; i <= 254; i++) allIps.push(`${subnet}.${i}`)
 
+  let probed = 0
   await parallelBatch(allIps, async (ip) => {
     if (!ipMatchesSubnet(ip, subnet)) return
+    onProbing?.(ip, ++probed, allIps.length)
     if (await isHostOnline(ip)) onFound(ip)
   }, 30)
 }
@@ -198,17 +200,22 @@ export async function GET(req: NextRequest) {
       const onlineHosts = new Map<string, string | null>()
       if (subnetInfo) {
         const targetSubnet = subnetInfo.subnet
-        send({ type: 'progress', message: `Varrendo ${targetSubnet}.0/24 (apenas online)...` })
-        await discoverSubnet(targetSubnet, new Map(), (ip) => {
-          // Strict subnet match — reject any IP outside the /24
-          if (!ipMatchesSubnet(ip, targetSubnet)) return
-          const last = parseInt(ip.split('.')[3])
-          if (last === 0 || last === 255) return
-          // Reject multicast, broadcast and non-private ranges
-          const first = parseInt(ip.split('.')[0])
-          if (first >= 224) return
-          onlineHosts.set(ip, arpHosts.get(ip) ?? null)
-        })
+        send({ type: 'progress', message: `Iniciando varredura ${targetSubnet}.0/24...`, subnet: targetSubnet, total: 254 })
+        await discoverSubnet(
+          targetSubnet,
+          new Map(),
+          (ip) => {
+            if (!ipMatchesSubnet(ip, targetSubnet)) return
+            const last = parseInt(ip.split('.')[3])
+            if (last === 0 || last === 255) return
+            const first = parseInt(ip.split('.')[0])
+            if (first >= 224) return
+            onlineHosts.set(ip, arpHosts.get(ip) ?? null)
+          },
+          (ip, index, total) => {
+            send({ type: 'scanning', ip, index, total })
+          },
+        )
       }
 
       const hosts = Array.from(onlineHosts.entries())
