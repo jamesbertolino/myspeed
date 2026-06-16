@@ -127,7 +127,6 @@ export default function HistoryPage() {
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                   <Line type="monotone" dataKey="Download" stroke="#00d4ff" dot={false} strokeWidth={2} />
                   <Line type="monotone" dataKey="Upload"   stroke="#00ff88" dot={false} strokeWidth={2} />
-                  <Line type="monotone" dataKey="Ping"     stroke="#ffd700" dot={false} strokeWidth={1.5} yAxisId="right" hide />
                 </LineChart>
               </ResponsiveContainer>
             </div>
