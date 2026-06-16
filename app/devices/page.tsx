@@ -112,15 +112,17 @@ function PortBadge({ p }: { p: OpenPort }) {
   )
 }
 
-function DeviceCard({ device }: { device: Device }) {
+function DeviceCard({ device, onSelect }: { device: Device; onSelect: (d: Device) => void }) {
   const [expanded, setExpanded] = useState(false)
   const hasPorts = device.openPorts.length > 0
   const visiblePorts = expanded ? device.openPorts : device.openPorts.slice(0, 4)
   const extra = device.openPorts.length - 4
 
   return (
-    <div className={clsx(
-      'card border transition-all',
+    <div
+      onClick={() => onSelect(device)}
+      className={clsx(
+      'card border transition-all cursor-pointer hover:border-cyan-500/40',
       device.riskLevel === 'critical' ? 'border-red-500/30 bg-red-500/5' :
       device.riskLevel === 'high'     ? 'border-orange-500/20' :
       device.riskLevel === 'medium'   ? 'border-yellow-500/20' :
@@ -154,7 +156,7 @@ function DeviceCard({ device }: { device: Device }) {
             {visiblePorts.map(p => <PortBadge key={p.port} p={p} />)}
             {!expanded && extra > 0 && (
               <button
-                onClick={() => setExpanded(true)}
+                onClick={(e) => { e.stopPropagation(); setExpanded(true) }}
                 className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-[#1a2744] text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
               >
                 +{extra} <ChevronDown className="w-3 h-3" />
@@ -162,7 +164,7 @@ function DeviceCard({ device }: { device: Device }) {
             )}
             {expanded && extra > 0 && (
               <button
-                onClick={() => setExpanded(false)}
+                onClick={(e) => { e.stopPropagation(); setExpanded(false) }}
                 className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-[#1a2744] text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
               >
                 <ChevronUp className="w-3 h-3" />
@@ -173,6 +175,142 @@ function DeviceCard({ device }: { device: Device }) {
       ) : (
         <p className="text-[11px] text-gray-600">Nenhuma porta vulnerável detectada</p>
       )}
+    </div>
+  )
+}
+
+interface PingSample { ts: number; ms: number; ok: boolean }
+
+function DeviceDetailModal({ device, onClose }: { device: Device; onClose: () => void }) {
+  const [pinging, setPinging] = useState(false)
+  const [samples, setSamples] = useState<PingSample[]>([])
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const pingOnce = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/ping?target=${device.ip}&_=${Date.now()}`, { cache: 'no-store' })
+      const data = await res.json()
+      setSamples(prev => [...prev.slice(-19), { ts: Date.now(), ms: data.ms, ok: data.ok }])
+    } catch {
+      setSamples(prev => [...prev.slice(-19), { ts: Date.now(), ms: -1, ok: false }])
+    }
+  }, [device.ip])
+
+  const toggleLivePing = () => {
+    if (pinging) {
+      if (timerRef.current) clearInterval(timerRef.current)
+      timerRef.current = null
+      setPinging(false)
+      return
+    }
+    setPinging(true)
+    pingOnce()
+    timerRef.current = setInterval(pingOnce, 2000)
+  }
+
+  useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current) }, [])
+
+  const last = samples[samples.length - 1]
+  const avg = samples.filter(s => s.ok).length
+    ? Math.round(samples.filter(s => s.ok).reduce((a, s) => a + s.ms, 0) / samples.filter(s => s.ok).length)
+    : null
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="card w-full max-w-md border border-[#1a2744] max-h-[85vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-2 mb-4">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-9 h-9 rounded-lg bg-[#0f1a35] border border-[#1a2744] flex items-center justify-center shrink-0">
+              <Monitor className="w-4 h-4 text-cyan-400" />
+            </div>
+            <div className="min-w-0">
+              <p className="font-mono text-base text-white font-semibold">{device.ip}</p>
+              {device.vendor && <p className="text-[11px] text-gray-400 truncate">{device.vendor}</p>}
+            </div>
+          </div>
+          <button onClick={onClose} className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors">
+            Fechar
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <div className="bg-[#0f1a35] border border-[#1a2744] rounded-lg p-2.5">
+            <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-0.5">Hostname</p>
+            <p className="text-xs text-white truncate">{device.hostname ?? '—'}</p>
+          </div>
+          <div className="bg-[#0f1a35] border border-[#1a2744] rounded-lg p-2.5">
+            <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-0.5">MAC</p>
+            <p className="text-xs text-white font-mono truncate">{device.mac ?? '—'}</p>
+          </div>
+          <div className="bg-[#0f1a35] border border-[#1a2744] rounded-lg p-2.5">
+            <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-0.5">Risco</p>
+            <RiskBadge level={device.riskLevel} />
+          </div>
+          <div className="bg-[#0f1a35] border border-[#1a2744] rounded-lg p-2.5">
+            <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-0.5">Portas abertas</p>
+            <p className="text-xs text-white">{device.openPorts.length}</p>
+          </div>
+        </div>
+
+        {device.openPorts.length > 0 && (
+          <div className="mb-4">
+            <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-1.5 font-medium">Portas</p>
+            <div className="flex flex-wrap gap-1">
+              {device.openPorts.map(p => <PortBadge key={p.port} p={p} />)}
+            </div>
+          </div>
+        )}
+
+        <div className="border-t border-[#1a2744] pt-3">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-semibold text-white">Ping ao vivo</p>
+            <button
+              onClick={toggleLivePing}
+              className={clsx(
+                'px-3 py-1 rounded-lg text-[11px] font-semibold transition-colors',
+                pinging ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25' : 'btn-cyan'
+              )}
+            >
+              {pinging ? 'Parar' : 'Iniciar'}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 mb-2">
+            <div className="bg-[#0f1a35] border border-[#1a2744] rounded-lg p-2.5">
+              <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-0.5">Último</p>
+              <p className={clsx('text-sm font-mono', last && !last.ok ? 'text-red-400' : 'text-white')}>
+                {last ? (last.ok ? `${last.ms} ms` : 'timeout') : '—'}
+              </p>
+            </div>
+            <div className="bg-[#0f1a35] border border-[#1a2744] rounded-lg p-2.5">
+              <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-0.5">Média</p>
+              <p className="text-sm font-mono text-white">{avg !== null ? `${avg} ms` : '—'}</p>
+            </div>
+          </div>
+
+          {samples.length > 0 && (
+            <div className="flex items-end gap-0.5 h-12">
+              {samples.map((s, i) => {
+                const h = s.ok ? Math.min(100, Math.max(8, (s.ms / 150) * 100)) : 100
+                return (
+                  <div
+                    key={i}
+                    title={s.ok ? `${s.ms} ms` : 'timeout'}
+                    className={clsx('flex-1 rounded-sm', s.ok ? 'bg-cyan-500/60' : 'bg-red-500/60')}
+                    style={{ height: `${h}%` }}
+                  />
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -293,6 +431,7 @@ function AIPanel({ analysis, onClose }: { analysis: AIAnalysis; onClose: () => v
 export default function DevicesPage() {
   const [scanning, setScanning] = useState(false)
   const [devices, setDevices] = useState<Device[]>([])
+  const [selectedDevice, setSelectedDevice] = useState<Device | null>(null)
   const [deviceSearch, setDeviceSearch] = useState('')
   const [deviceRangeFilter, setDeviceRangeFilter] = useState('all')
   const [deviceRiskFilter, setDeviceRiskFilter] = useState('all')
@@ -910,12 +1049,16 @@ export default function DevicesPage() {
                     return toNum(a.ip) - toNum(b.ip)
                   })
                   .map(device => (
-                    <DeviceCard key={device.ip} device={device} />
+                    <DeviceCard key={device.ip} device={device} onSelect={setSelectedDevice} />
                   ))}
               </div>
             </>
           )}
         </div>
+      )}
+
+      {selectedDevice && (
+        <DeviceDetailModal device={selectedDevice} onClose={() => setSelectedDevice(null)} />
       )}
 
       {/* Empty state */}
