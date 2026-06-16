@@ -347,7 +347,7 @@ function SidebarStatus() {
         </div>
         <div className="flex justify-between text-[11px]">
           <span className="text-gray-500">Versão</span>
-          <span className="text-gray-400">v2.6.9</span>
+          <span className="text-gray-400">v2.7.0</span>
         </div>
       </div>
     </div>

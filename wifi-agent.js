@@ -409,6 +409,19 @@ function getArpHosts(targetSubnet) {
   return ips
 }
 
+function ipToInt(ip) {
+  const [a, b, c, d] = ip.split('.').map(Number)
+  return ((a << 24) | (b << 16) | (c << 8) | d) >>> 0
+}
+
+function intToIp(n) {
+  return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.')
+}
+
+function netmaskToPrefixLen(netmask) {
+  return netmask.split('.').map(Number).reduce((acc, octet) => acc + octet.toString(2).split('1').length - 1, 0)
+}
+
 function getLocalSubnet(preferSubnet) {
   const os = require('os')
   const ifaces = os.networkInterfaces()
@@ -419,7 +432,12 @@ function getLocalSubnet(preferSubnet) {
         const parts = iface.address.split('.').map(Number)
         const [a, b] = parts
         if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) {
-          candidates.push({ subnet: `${parts[0]}.${parts[1]}.${parts[2]}`, localIp: iface.address })
+          const prefixLen = netmaskToPrefixLen(iface.netmask)
+          const ipInt = ipToInt(iface.address)
+          const maskInt = prefixLen === 0 ? 0 : (0xffffffff << (32 - prefixLen)) >>> 0
+          const network = (ipInt & maskInt) >>> 0
+          const broadcast = (network | (~maskInt >>> 0)) >>> 0
+          candidates.push({ subnet: `${parts[0]}.${parts[1]}.${parts[2]}`, localIp: iface.address, network, broadcast, prefixLen })
         }
       }
     }
@@ -432,26 +450,29 @@ function getLocalSubnet(preferSubnet) {
   return candidates[0]
 }
 
-async function discoverSubnet(subnet, arpHosts, onFound) {
+async function isHostOnline(ip) {
   // Portas comuns em dispositivos + roteadores (inclui 53, 8888, 7547 que roteadores usam)
   const PROBE_PORTS = [80, 443, 22, 8080, 8443, 21, 23, 3389, 53, 8888, 7547, 8181, 8000]
-  const gateway = `${subnet}.1`
+  const results = await Promise.all(PROBE_PORTS.map(port => tcpProbe(ip, port, 500)))
+  return results.some(Boolean)
+}
 
-  // Sempre inclui o gateway, independente de responder TCP
+async function discoverSubnet(info, arpHosts, onFound, onProbing) {
+  // hosts utilizáveis: entre rede+1 e broadcast-1 (cobre /24, /25, /26... corretamente)
+  const firstHost = info.network + 1
+  const lastHost = info.broadcast - 1
+  const allIps = []
+  for (let n = firstHost; n <= lastHost; n++) allIps.push(intToIp(n))
+
+  const gateway = intToIp(firstHost)
   if (!arpHosts.has(gateway)) arpHosts.set(gateway, null)
 
-  const allIps = []
-  for (let i = 1; i <= 254; i++) allIps.push(`${subnet}.${i}`)
-
+  let probed = 0
   await parallelBatch(allIps, async (ip) => {
+    onProbing && onProbing(ip, ++probed, allIps.length)
     if (arpHosts.has(ip)) return
-    for (const port of PROBE_PORTS) {
-      if (await tcpProbe(ip, port, 500)) {
-        onFound(ip)
-        return
-      }
-    }
-  }, 25)
+    if (await isHostOnline(ip)) onFound(ip)
+  }, 30)
 }
 
 async function scanDevicePorts(host) {
@@ -487,10 +508,19 @@ async function handleDevices(req, res) {
   const arpHosts = getArpHosts(targetSubnet)
 
   if (subnetInfo) {
-    ndjson({ type: 'progress', message: `Varrendo ${subnetInfo.subnet}.0/24 (isso pode levar alguns segundos)...` })
-    await discoverSubnet(subnetInfo.subnet, arpHosts, (ip) => {
-      if (!arpHosts.has(ip)) arpHosts.set(ip, null)
+    const totalHosts = subnetInfo.broadcast - subnetInfo.network - 1
+    ndjson({
+      type: 'progress',
+      message: `Varrendo ${intToIp(subnetInfo.network)}/${subnetInfo.prefixLen} (isso pode levar alguns segundos)...`,
+      subnet: subnetInfo.subnet,
+      total: totalHosts,
     })
+    await discoverSubnet(
+      subnetInfo,
+      arpHosts,
+      (ip) => { if (!arpHosts.has(ip)) arpHosts.set(ip, null) },
+      (ip, index, total) => { ndjson({ type: 'scanning', ip, index, total }) },
+    )
   }
 
   // Filtro final: apenas IPs do subnet alvo, sem broadcast nem multicast

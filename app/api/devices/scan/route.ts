@@ -112,9 +112,30 @@ function getArpHosts(): Map<string, string | null> {
   return ips
 }
 
-function getLocalSubnet(preferSubnet?: string): { subnet: string; localIp: string } | null {
+function ipToInt(ip: string): number {
+  const [a, b, c, d] = ip.split('.').map(Number)
+  return ((a << 24) | (b << 16) | (c << 8) | d) >>> 0
+}
+
+function intToIp(n: number): string {
+  return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.')
+}
+
+interface SubnetInfo {
+  subnet: string      // "a.b.c" — primeiros 3 octetos, mantido p/ compat. com a UI (assume /24 quando exibido)
+  localIp: string
+  network: number      // endereço de rede como inteiro
+  broadcast: number     // endereço de broadcast como inteiro
+  prefixLen: number
+}
+
+function netmaskToPrefixLen(netmask: string): number {
+  return netmask.split('.').map(Number).reduce((acc, octet) => acc + octet.toString(2).split('1').length - 1, 0)
+}
+
+function getLocalSubnet(preferSubnet?: string): SubnetInfo | null {
   const ifaces = os.networkInterfaces()
-  const candidates: { subnet: string; localIp: string }[] = []
+  const candidates: SubnetInfo[] = []
 
   for (const addrs of Object.values(ifaces)) {
     for (const iface of (addrs ?? [])) {
@@ -122,7 +143,18 @@ function getLocalSubnet(preferSubnet?: string): { subnet: string; localIp: strin
       const parts = iface.address.split('.').map(Number)
       const [a, b] = parts
       if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) {
-        candidates.push({ subnet: `${parts[0]}.${parts[1]}.${parts[2]}`, localIp: iface.address })
+        const prefixLen = netmaskToPrefixLen(iface.netmask)
+        const ipInt = ipToInt(iface.address)
+        const maskInt = prefixLen === 0 ? 0 : (0xffffffff << (32 - prefixLen)) >>> 0
+        const network = (ipInt & maskInt) >>> 0
+        const broadcast = (network | (~maskInt >>> 0)) >>> 0
+        candidates.push({
+          subnet: `${parts[0]}.${parts[1]}.${parts[2]}`,
+          localIp: iface.address,
+          network,
+          broadcast,
+          prefixLen,
+        })
       }
     }
   }
@@ -142,25 +174,23 @@ async function isHostOnline(ip: string): Promise<boolean> {
   return results.some(Boolean)
 }
 
-function ipMatchesSubnet(ip: string, subnet: string): boolean {
-  return ip.startsWith(subnet + '.')
-}
-
 async function discoverSubnet(
-  subnet: string,
+  info: SubnetInfo,
   arpHosts: Map<string, string | null>,
   onFound: (ip: string) => void,
   onProbing?: (ip: string, index: number, total: number) => void,
 ): Promise<void> {
-  const gateway = `${subnet}.1`
-  if (!arpHosts.has(gateway)) arpHosts.set(gateway, null)
-
+  // hosts utilizáveis: entre rede+1 e broadcast-1 (cobre /24, /25, /26... corretamente)
+  const firstHost = info.network + 1
+  const lastHost = info.broadcast - 1
   const allIps: string[] = []
-  for (let i = 1; i <= 254; i++) allIps.push(`${subnet}.${i}`)
+  for (let n = firstHost; n <= lastHost; n++) allIps.push(intToIp(n))
+
+  const gateway = intToIp(firstHost)
+  if (!arpHosts.has(gateway)) arpHosts.set(gateway, null)
 
   let probed = 0
   await parallelBatch(allIps, async (ip) => {
-    if (!ipMatchesSubnet(ip, subnet)) return
     onProbing?.(ip, ++probed, allIps.length)
     if (await isHostOnline(ip)) onFound(ip)
   }, 30)
@@ -193,22 +223,21 @@ export async function GET(req: NextRequest) {
 
       const arpHosts = getArpHosts()
       const subnetInfo = getLocalSubnet(preferSubnet)
-      const subnetPrefix = subnetInfo?.subnet
 
       // Discover all online hosts via TCP probe on the selected subnet only
       const onlineHosts = new Map<string, string | null>()
       if (subnetInfo) {
-        const targetSubnet = subnetInfo.subnet
-        send({ type: 'progress', message: `Iniciando varredura ${targetSubnet}.0/24...`, subnet: targetSubnet, total: 254 })
+        const totalHosts = subnetInfo.broadcast - subnetInfo.network - 1
+        send({
+          type: 'progress',
+          message: `Iniciando varredura ${intToIp(subnetInfo.network)}/${subnetInfo.prefixLen}...`,
+          subnet: subnetInfo.subnet,
+          total: totalHosts,
+        })
         await discoverSubnet(
-          targetSubnet,
+          subnetInfo,
           new Map(),
           (ip) => {
-            if (!ipMatchesSubnet(ip, targetSubnet)) return
-            const last = parseInt(ip.split('.')[3])
-            if (last === 0 || last === 255) return
-            const first = parseInt(ip.split('.')[0])
-            if (first >= 224) return
             onlineHosts.set(ip, arpHosts.get(ip) ?? null)
           },
           (ip, index, total) => {
