@@ -803,8 +803,9 @@ export default function DevicesPage() {
             {devices
               .slice()
               .sort((a, b) => {
-                const order = { critical: 0, high: 1, medium: 2, low: 3, none: 4 }
-                return (order[a.riskLevel] ?? 5) - (order[b.riskLevel] ?? 5)
+                const toNum = (ip: string) =>
+                  ip.split('.').reduce((acc, octet) => acc * 256 + Number(octet), 0)
+                return toNum(a.ip) - toNum(b.ip)
               })
               .map(device => (
                 <DeviceCard key={device.ip} device={device} />
