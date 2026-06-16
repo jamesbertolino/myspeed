@@ -529,7 +529,7 @@ export default function NetworkPage() {
           {benchLoading && benchResults.length === 0 && (
             <div className="card p-8 flex flex-col items-center gap-3 text-gray-500">
               <Loader2 className="w-8 h-8 animate-spin text-[#00d4ff]" />
-              <p className="text-sm">Consultando servidores via UDP DNS — equivalente ao nslookup…</p>
+              <p className="text-sm">Medindo latência ICMP para cada servidor DNS — aguarde…</p>
             </div>
           )}
 
@@ -600,7 +600,7 @@ export default function NetworkPage() {
                 </div>
 
                 <p className="text-xs text-gray-600 mt-4 text-center">
-                  Medido via UDP raw (porta 53) · 5 amostras por servidor · equivalente ao nslookup no CMD
+                  Medido via ICMP ping (OS) · 5 amostras por servidor · mesma precisão do CMD
                 </p>
               </div>
             )

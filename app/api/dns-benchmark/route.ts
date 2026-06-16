@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import dgram from 'dgram'
+import { exec } from 'child_process'
+import { promisify } from 'util'
 
 export const runtime = 'nodejs'
+
+const execAsync = promisify(exec)
 
 const SERVERS = [
   { name: 'Cloudflare',    ip: '1.1.1.1',        flag: '🌐' },
@@ -17,75 +20,44 @@ const SERVERS = [
 ]
 
 const SAMPLES = 5
-const TIMEOUT = 3000
-const DELAY   = 100  // ms entre amostras
 
-// Monta pacote DNS mínimo: query A para 'google.com'
-function buildDnsQuery(id: number): Buffer {
-  const buf = Buffer.alloc(29)
-  buf.writeUInt16BE(id & 0xffff, 0)
-  buf.writeUInt16BE(0x0100, 2)   // standard query
-  buf.writeUInt16BE(1, 4)        // 1 question
-  buf.writeUInt16BE(0, 6); buf.writeUInt16BE(0, 8); buf.writeUInt16BE(0, 10)
-  let off = 12
-  for (const part of 'google.com'.split('.')) {
-    buf[off++] = part.length
-    Buffer.from(part).copy(buf, off); off += part.length
-  }
-  buf[off++] = 0
-  buf.writeUInt16BE(1, off); off += 2  // type A
-  buf.writeUInt16BE(1, off)            // class IN
-  return buf
+function sanitize(ip: string): string | null {
+  return /^[0-9.a-fA-F:]+$/.test(ip) ? ip : null
 }
 
-function udpPing(ip: string): Promise<number> {
-  return new Promise(resolve => {
-    const sock = dgram.createSocket('udp4')
-    const pkt  = buildDnsQuery(Math.floor(Math.random() * 0xffff))
-    let done   = false
-    const t0   = Date.now()
+async function icmpPing(ip: string): Promise<{ avg: number; samples: number[]; timeout: boolean }> {
+  const isWin = process.platform === 'win32'
+  const cmd   = isWin ? `ping -n ${SAMPLES} ${ip}` : `ping -c ${SAMPLES} ${ip}`
 
-    const finish = (ms: number) => {
-      if (done) return
-      done = true
-      try { sock.close() } catch {}
-      resolve(ms)
-    }
+  try {
+    const { stdout } = await execAsync(cmd, { timeout: SAMPLES * 2000 + 3000 })
 
-    sock.on('message', () => finish(Date.now() - t0))
-    sock.on('error',   () => finish(TIMEOUT))
-    setTimeout(() => finish(TIMEOUT), TIMEOUT)
-    sock.send(pkt, 53, ip)
-  })
-}
+    const matches = isWin
+      ? [...stdout.matchAll(/[Tt]empo[<=](\d+(?:\.\d+)?)\s*ms/gi)]
+      : [...stdout.matchAll(/time[<=](\d+(?:\.\d+)?)\s*ms/gi)]
 
-async function measureServer(ip: string): Promise<{ avg: number; samples: number[]; timeout: boolean }> {
-  const samples: number[] = []
-  for (let i = 0; i < SAMPLES; i++) {
-    samples.push(await udpPing(ip))
-    if (i < SAMPLES - 1) await new Promise(r => setTimeout(r, DELAY))
+    const samples = matches.map(m => Math.round(parseFloat(m[1])))
+    if (samples.length === 0) return { avg: -1, samples: [], timeout: true }
+
+    const avg = Math.round(samples.reduce((a, b) => a + b, 0) / samples.length)
+    return { avg, samples, timeout: false }
+  } catch {
+    return { avg: -1, samples: [], timeout: true }
   }
-  const valid   = samples.filter(s => s < TIMEOUT)
-  const timeout = valid.length === 0
-  const avg     = timeout
-    ? TIMEOUT
-    : Math.round(valid.reduce((a, b) => a + b, 0) / valid.length)
-  return { avg, samples, timeout }
 }
 
 export async function GET(req: NextRequest) {
   const customIp = req.nextUrl.searchParams.get('ip')
 
   if (customIp) {
-    if (!/^[0-9.a-fA-F:]+$/.test(customIp)) {
-      return NextResponse.json({ error: 'invalid ip' }, { status: 400 })
-    }
-    const result = await measureServer(customIp)
-    return NextResponse.json({ ip: customIp, name: 'Personalizado', flag: '⚙️', ...result })
+    const safe = sanitize(customIp)
+    if (!safe) return NextResponse.json({ error: 'invalid ip' }, { status: 400 })
+    const result = await icmpPing(safe)
+    return NextResponse.json({ ip: safe, name: 'Personalizado', flag: '⚙️', ...result })
   }
 
   const results = await Promise.all(
-    SERVERS.map(async srv => ({ ...srv, ...(await measureServer(srv.ip)) }))
+    SERVERS.map(async srv => ({ ...srv, ...(await icmpPing(srv.ip)) }))
   )
   results.sort((a, b) => (a.timeout ? 1 : 0) - (b.timeout ? 1 : 0) || a.avg - b.avg)
 
