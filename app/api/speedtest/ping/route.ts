@@ -24,11 +24,11 @@ async function icmpPingMulti(host: string, count: number): Promise<{ avg: number
 
     if (isWin) {
       // "tempo=13ms" ou "tempo<1ms"
-      const matches = stdout.matchAll(/[Tt]empo[<=](\d+(?:\.\d+)?)\s*ms/gi)
+      const matches = Array.from(stdout.matchAll(/[Tt]empo[<=](\d+(?:\.\d+)?)\s*ms/gi))
       for (const m of matches) samples.push(parseFloat(m[1]))
     } else {
       // "time=13.2 ms"
-      const matches = stdout.matchAll(/time[<=](\d+(?:\.\d+)?)\s*ms/gi)
+      const matches = Array.from(stdout.matchAll(/time[<=](\d+(?:\.\d+)?)\s*ms/gi))
       for (const m of matches) samples.push(parseFloat(m[1]))
     }
 

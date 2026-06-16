@@ -39,9 +39,9 @@ function parse(raw: string) {
     const results: string[] = []
     for (const key of keys) {
       const re = new RegExp(`^${key}[^:]*:\\s*(.+)`, 'gim')
-      for (const m of raw.matchAll(re)) results.push(m[1].trim())
+      for (const m of Array.from(raw.matchAll(re))) results.push(m[1].trim())
     }
-    return [...new Set(results)]
+    return Array.from(new Set(results))
   }
 
   return {

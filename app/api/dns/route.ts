@@ -93,7 +93,7 @@ function parseNslookup(out: string, type: DnsType, win: boolean): string[] {
     ).slice(0, 20)
   }
 
-  return [...new Set(records)]
+  return Array.from(new Set(records))
 }
 
 export async function GET(request: NextRequest) {

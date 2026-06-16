@@ -24,7 +24,7 @@ function parseWindowsLine(line: string): Hop | null {
     return { hop, host: '*', ip: '*', latency: null, timeout: true }
   }
 
-  const times = [...rest.matchAll(/<?\s*(\d+)\s*ms/gi)].map(t => parseInt(t[1]))
+  const times = Array.from(rest.matchAll(/<?\s*(\d+)\s*ms/gi)).map(t => parseInt(t[1]))
   const latency = times.length ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : null
   const ipMatch = rest.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/)
   const ip = ipMatch ? ipMatch[1] : rest.trim().split(/\s+/).pop() ?? '*'

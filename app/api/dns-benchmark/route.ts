@@ -32,7 +32,7 @@ async function getIspDns(): Promise<{ name: string; ip: string; flag: string; is
 
     if (isWin) {
       const { stdout } = await execAsync('ipconfig /all', { timeout: 5000 })
-      const matches = [...stdout.matchAll(/DNS Servers[^:]*:\s*([\d.]+)/gi)]
+      const matches = Array.from(stdout.matchAll(/DNS Servers[^:]*:\s*([\d.]+)/gi))
       for (const m of matches) {
         const ip = m[1].trim()
         if (ip && !ips.includes(ip)) ips.push(ip)
@@ -50,7 +50,7 @@ async function getIspDns(): Promise<{ name: string; ip: string; flag: string; is
       }
     } else {
       const { stdout } = await execAsync('cat /etc/resolv.conf', { timeout: 3000 })
-      const matches = [...stdout.matchAll(/^nameserver\s+([\d.]+)/gm)]
+      const matches = Array.from(stdout.matchAll(/^nameserver\s+([\d.]+)/gm))
       ips = matches.map(m => m[1]).filter((v, i, a) => a.indexOf(v) === i)
     }
 
@@ -82,8 +82,8 @@ async function icmpPing(ip: string): Promise<{ avg: number; samples: number[]; t
     const { stdout } = await execAsync(cmd, { timeout: SAMPLES * 2000 + 3000 })
 
     const matches = isWin
-      ? [...stdout.matchAll(/[Tt]empo[<=](\d+(?:\.\d+)?)\s*ms/gi)]
-      : [...stdout.matchAll(/time[<=](\d+(?:\.\d+)?)\s*ms/gi)]
+      ? Array.from(stdout.matchAll(/[Tt]empo[<=](\d+(?:\.\d+)?)\s*ms/gi))
+      : Array.from(stdout.matchAll(/time[<=](\d+(?:\.\d+)?)\s*ms/gi))
 
     const samples = matches.map(m => Math.round(parseFloat(m[1])))
     if (samples.length === 0) return { avg: -1, samples: [], timeout: true }
