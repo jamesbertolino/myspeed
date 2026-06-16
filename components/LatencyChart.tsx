@@ -26,19 +26,32 @@ const CustomTooltip = ({ active, payload }: { active?: boolean; payload?: Array<
 }
 
 export default function LatencyChart({ data, height = 160, showGrid = false }: Props) {
-  const maxVal = Math.max(...data.map(d => d.latency), 100)
+  const values  = data.map(d => d.latency)
+  const minVal  = Math.min(...values)
+  const maxVal  = Math.max(...values)
+  const range   = Math.max(maxVal - minVal, 1)
+  // padding: 30% do range, mínimo 2 ms de cada lado
+  const pad     = Math.max(range * 0.3, 2)
+  const yMin    = Math.max(0, Math.floor(minVal - pad))
+  const yMax    = Math.ceil(maxVal + pad)
 
   return (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={data} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
-        {showGrid && (
-          <CartesianGrid strokeDasharray="3 3" stroke="#1a2744" />
-        )}
+        {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="#1a2744" />}
         <XAxis dataKey="t" hide />
-        <YAxis domain={[0, maxVal * 1.2]} tick={{ fill: '#4a5568', fontSize: 10 }} />
+        <YAxis
+          domain={[yMin, yMax]}
+          tick={{ fill: '#4a5568', fontSize: 10 }}
+          tickFormatter={v => `${v}`}
+        />
         <Tooltip content={<CustomTooltip />} />
-        <ReferenceLine y={50} stroke="#ffd700" strokeDasharray="4 4" strokeOpacity={0.3} />
-        <ReferenceLine y={100} stroke="#ff4d4d" strokeDasharray="4 4" strokeOpacity={0.3} />
+        {50 >= yMin && 50 <= yMax && (
+          <ReferenceLine y={50} stroke="#ffd700" strokeDasharray="4 4" strokeOpacity={0.3} />
+        )}
+        {100 >= yMin && 100 <= yMax && (
+          <ReferenceLine y={100} stroke="#ff4d4d" strokeDasharray="4 4" strokeOpacity={0.3} />
+        )}
         <Line
           type="monotone"
           dataKey="latency"
