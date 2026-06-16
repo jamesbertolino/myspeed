@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import {
   Activity, Search, Network, Play, Square, AlertTriangle,
-  CheckCircle, Clock, Globe, ChevronRight, Loader2
+  CheckCircle, Clock, Globe, ChevronRight, Loader2, Zap, Copy, Check
 } from 'lucide-react'
 import LatencyChart from '@/components/LatencyChart'
 import { latencyColor, calcJitter, jitterColor, jitterLabel, latencyLabel, formatLatency } from '@/lib/utils'
@@ -38,8 +38,17 @@ const PING_PRESETS = [
 
 const DNS_TYPES = ['A', 'AAAA', 'MX', 'TXT', 'NS', 'CNAME', 'SOA', 'ALL']
 
+interface BenchResult {
+  name: string
+  ip: string
+  flag: string
+  avg: number
+  samples: number[]
+  timeout: boolean
+}
+
 export default function NetworkPage() {
-  const [tab, setTab] = useState<'ping' | 'traceroute' | 'dns'>('ping')
+  const [tab, setTab] = useState<'ping' | 'traceroute' | 'dns' | 'benchmark'>('ping')
 
   // Ping state
   const [pingData, setPingData] = useState<PingPoint[]>([])
@@ -57,6 +66,13 @@ export default function NetworkPage() {
   const [traceHops, setTraceHops] = useState<TraceHop[]>([])
   const [traceLoading, setTraceLoading] = useState(false)
   const [traceSimulated, setTraceSimulated] = useState(false)
+
+  // DNS Benchmark state
+  const [benchResults,  setBenchResults]  = useState<BenchResult[]>([])
+  const [benchLoading,  setBenchLoading]  = useState(false)
+  const [benchCustomIp, setBenchCustomIp] = useState('')
+  const [benchDone,     setBenchDone]     = useState(false)
+  const [copied,        setCopied]        = useState('')
 
   // DNS state
   const [dnsDomain, setDnsDomain] = useState('google.com')
@@ -117,6 +133,36 @@ export default function NetworkPage() {
     }
   }
 
+  const runBenchmark = async () => {
+    setBenchLoading(true)
+    setBenchDone(false)
+    setBenchResults([])
+    try {
+      const [mainRes, customRes] = await Promise.all([
+        fetch('/api/dns-benchmark').then(r => r.json()),
+        benchCustomIp.trim()
+          ? fetch(`/api/dns-benchmark?ip=${encodeURIComponent(benchCustomIp.trim())}`).then(r => r.json())
+          : Promise.resolve(null),
+      ])
+      const rows: BenchResult[] = mainRes.results ?? []
+      if (customRes && customRes.avg != null) {
+        rows.push({ name: 'Personalizado', ip: benchCustomIp.trim(), flag: '⚙️', avg: customRes.avg, samples: customRes.samples, timeout: customRes.timeout })
+        rows.sort((a, b) => (a.timeout ? 1 : 0) - (b.timeout ? 1 : 0) || a.avg - b.avg)
+      }
+      setBenchResults(rows)
+      setBenchDone(true)
+    } finally {
+      setBenchLoading(false)
+    }
+  }
+
+  const copyIp = (ip: string) => {
+    navigator.clipboard.writeText(ip).then(() => {
+      setCopied(ip)
+      setTimeout(() => setCopied(''), 2000)
+    })
+  }
+
   const runDns = async () => {
     setDnsLoading(true)
     setDnsResult(null)
@@ -144,6 +190,7 @@ export default function NetworkPage() {
           { id: 'ping', icon: Activity, label: 'Ping / Jitter' },
           { id: 'traceroute', icon: Network, label: 'Traceroute' },
           { id: 'dns', icon: Globe, label: 'DNS Lookup' },
+          { id: 'benchmark', icon: Zap, label: 'DNS Benchmark' },
         ] as const).map(t => (
           <button
             key={t.id}
@@ -447,6 +494,111 @@ export default function NetworkPage() {
               )}
             </div>
           )}
+        </div>
+      )}
+      {tab === 'benchmark' && (
+        <div className="space-y-4">
+          {/* controles */}
+          <div className="card p-4 flex flex-wrap items-end gap-4">
+            <div className="flex-1 min-w-48">
+              <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">IP personalizado (opcional)</label>
+              <input
+                className="dark-input"
+                value={benchCustomIp}
+                onChange={e => setBenchCustomIp(e.target.value)}
+                placeholder="ex: 192.168.1.1 (gateway)"
+                onKeyDown={e => e.key === 'Enter' && !benchLoading && runBenchmark()}
+              />
+            </div>
+            <button
+              onClick={runBenchmark}
+              disabled={benchLoading}
+              className="btn-cyan px-5 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 disabled:opacity-50"
+            >
+              {benchLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+              {benchLoading ? 'Testando…' : 'Iniciar Benchmark'}
+            </button>
+          </div>
+
+          {benchLoading && benchResults.length === 0 && (
+            <div className="card p-8 flex flex-col items-center gap-3 text-gray-500">
+              <Loader2 className="w-8 h-8 animate-spin text-[#00d4ff]" />
+              <p className="text-sm">Consultando {10 + (benchCustomIp ? 1 : 0)} servidores em paralelo…</p>
+            </div>
+          )}
+
+          {benchDone && benchResults.length > 0 && (() => {
+            const best    = benchResults.find(r => !r.timeout)
+            const maxAvg  = Math.max(...benchResults.filter(r => !r.timeout).map(r => r.avg), 1)
+
+            return (
+              <div className="card p-5">
+                {/* destaque vencedor */}
+                {best && (
+                  <div className="flex items-center gap-3 p-3 rounded-xl mb-5 border border-[#00d4ff]/20 bg-[#00d4ff]/5">
+                    <span className="text-2xl">{best.flag}</span>
+                    <div className="flex-1">
+                      <p className="text-xs text-[#00d4ff] font-semibold uppercase tracking-wider mb-0.5">Recomendado</p>
+                      <p className="text-white font-bold">{best.name} <span className="text-gray-400 font-normal text-sm">({best.ip})</span></p>
+                      <p className="text-xs text-gray-500 mt-0.5">Média {best.avg}ms · menor latência DNS na sua rede</p>
+                    </div>
+                    <button
+                      onClick={() => copyIp(best.ip)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-[#00d4ff]/30 text-[#00d4ff] hover:bg-[#00d4ff]/10 transition-all"
+                    >
+                      {copied === best.ip ? <><Check className="w-3 h-3" />Copiado!</> : <><Copy className="w-3 h-3" />Copiar IP</>}
+                    </button>
+                  </div>
+                )}
+
+                {/* tabela ranking */}
+                <div className="space-y-2">
+                  {benchResults.map((r, i) => {
+                    const barPct = r.timeout ? 100 : (r.avg / maxAvg) * 100
+                    const color  = r.timeout ? '#ff4d4d' : i === 0 ? '#00d4ff' : i < 3 ? '#00ff88' : i < 6 ? '#ffd700' : '#ff8800'
+                    return (
+                      <div key={r.ip} className="group">
+                        <div className="flex items-center gap-3 mb-1">
+                          <span className="text-gray-600 text-xs w-4 text-right shrink-0">{i + 1}</span>
+                          <span className="text-base shrink-0">{r.flag}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-white font-medium truncate">{r.name}</span>
+                              <span className="text-xs text-gray-600 mono shrink-0">{r.ip}</span>
+                            </div>
+                            <div className="relative h-1.5 bg-white/5 rounded-full mt-1.5 overflow-hidden">
+                              <div
+                                className="absolute left-0 top-0 h-full rounded-full transition-all"
+                                style={{ width: `${barPct}%`, background: color }}
+                              />
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0 w-20">
+                            {r.timeout ? (
+                              <span className="text-xs text-red-400">Timeout</span>
+                            ) : (
+                              <span className="text-sm font-bold mono" style={{ color }}>{r.avg}<span className="text-gray-500 text-xs font-normal ml-0.5">ms</span></span>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => copyIp(r.ip)}
+                            className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-600 hover:text-[#00d4ff]"
+                            title="Copiar IP"
+                          >
+                            {copied === r.ip ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <p className="text-xs text-gray-600 mt-4 text-center">
+                  Média de {3} resoluções reais por servidor · menor valor = mais rápido para sua rede
+                </p>
+              </div>
+            )
+          })()}
         </div>
       )}
     </div>
