@@ -10,6 +10,7 @@ export interface AlertThresholds {
   downloadMbps:     number   // alerta se download < X Mbps (0 = desativado)
   uploadMbps:       number   // alerta se upload < X Mbps (0 = desativado)
   cooldownMinutes:  number   // intervalo mínimo entre alertas do mesmo tipo
+  webhookUrl:       string   // URL de webhook (Discord/Slack/genérico) — '' = desativado
 }
 
 export interface AppSettings {
@@ -30,6 +31,7 @@ export const DEFAULT_ALERTS: AlertThresholds = {
   downloadMbps:    0,
   uploadMbps:      0,
   cooldownMinutes: 5,
+  webhookUrl:      '',
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

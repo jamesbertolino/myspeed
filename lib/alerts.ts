@@ -31,7 +31,7 @@ function canFire(type: AlertType, cooldownMs: number): boolean {
   return Date.now() - last >= cooldownMs
 }
 
-function fire(event: AlertEvent, cooldownMs: number) {
+function fire(event: AlertEvent, cooldownMs: number, webhookUrl?: string) {
   lastFired[event.type] = Date.now()
 
   // browser notification
@@ -55,6 +55,15 @@ function fire(event: AlertEvent, cooldownMs: number) {
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({ type: event.type, value: event.value, threshold: event.threshold, message: event.message }),
   }).catch(() => {})
+
+  // webhook externo (Discord/Slack/genérico) — chega mesmo sem permissão de notificação do browser
+  if (webhookUrl) {
+    fetch('/api/alerts/webhook', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ webhookUrl, message: event.message }),
+    }).catch(() => {})
+  }
 }
 
 export function checkAlerts(
@@ -75,7 +84,7 @@ export function checkAlerts(
       fire({
         type: 'ping', value: metrics.pingMs, threshold: thresholds.pingMs,
         message: `Latência elevada: ${metrics.pingMs}ms (limite: ${thresholds.pingMs}ms)`,
-      }, cooldownMs)
+      }, cooldownMs, thresholds.webhookUrl)
     }
   }
 
@@ -84,7 +93,7 @@ export function checkAlerts(
       fire({
         type: 'packet_loss', value: metrics.packetLossPct, threshold: thresholds.packetLossPct,
         message: `Perda de pacotes: ${metrics.packetLossPct.toFixed(1)}% (limite: ${thresholds.packetLossPct}%)`,
-      }, cooldownMs)
+      }, cooldownMs, thresholds.webhookUrl)
     }
   }
 
@@ -93,7 +102,7 @@ export function checkAlerts(
       fire({
         type: 'download', value: metrics.downloadMbps, threshold: thresholds.downloadMbps,
         message: `Download abaixo do mínimo: ${metrics.downloadMbps.toFixed(1)} Mbps (mínimo: ${thresholds.downloadMbps} Mbps)`,
-      }, cooldownMs)
+      }, cooldownMs, thresholds.webhookUrl)
     }
   }
 
@@ -102,7 +111,7 @@ export function checkAlerts(
       fire({
         type: 'upload', value: metrics.uploadMbps, threshold: thresholds.uploadMbps,
         message: `Upload abaixo do mínimo: ${metrics.uploadMbps.toFixed(1)} Mbps (mínimo: ${thresholds.uploadMbps} Mbps)`,
-      }, cooldownMs)
+      }, cooldownMs, thresholds.webhookUrl)
     }
   }
 }

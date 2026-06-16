@@ -13,6 +13,7 @@ export default function SettingsPage() {
   const [newLabel, setNewLabel] = useState('')
   const [newHost, setNewHost] = useState('')
   const [hostError, setHostError] = useState('')
+  const [webhookTest, setWebhookTest] = useState<'idle' | 'sending' | 'ok' | 'fail'>('idle')
 
   useEffect(() => {
     setSettings(loadSettings())
@@ -368,6 +369,41 @@ export default function SettingsPage() {
               value={settings.alerts.uploadMbps}
               onChange={e => setSettings(s => ({ ...s, alerts: { ...s.alerts, uploadMbps: Number(e.target.value) } }))}
             />
+          </div>
+
+          {/* webhook */}
+          <div className="pt-3 border-t border-[#1a2744]">
+            <label className="text-xs text-gray-400 block mb-1">Webhook (Discord, Slack ou genérico)</label>
+            <p className="text-xs text-gray-600 mb-2">Recebe os alertas mesmo com o app fechado ou sem permissão de notificação do browser · vazio = desativado</p>
+            <div className="flex gap-2">
+              <input type="url" placeholder="https://discord.com/api/webhooks/..."
+                className="input-field flex-1 text-xs"
+                value={settings.alerts.webhookUrl}
+                onChange={e => { setWebhookTest('idle'); setSettings(s => ({ ...s, alerts: { ...s.alerts, webhookUrl: e.target.value } })) }}
+              />
+              <button
+                disabled={!settings.alerts.webhookUrl || webhookTest === 'sending'}
+                onClick={async () => {
+                  setWebhookTest('sending')
+                  try {
+                    const res = await fetch('/api/alerts/webhook', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ webhookUrl: settings.alerts.webhookUrl, message: 'Teste de webhook do MySpeed 🚀' }),
+                    })
+                    const data = await res.json()
+                    setWebhookTest(data.ok ? 'ok' : 'fail')
+                  } catch {
+                    setWebhookTest('fail')
+                  }
+                }}
+                className="btn-cyan px-3 py-1.5 rounded-lg text-xs shrink-0 disabled:opacity-40"
+              >
+                Testar
+              </button>
+            </div>
+            {webhookTest === 'ok' && <p className="text-xs text-green-400 mt-1.5">Enviado com sucesso ✓</p>}
+            {webhookTest === 'fail' && <p className="text-xs text-red-400 mt-1.5">Falha ao enviar — verifique a URL</p>}
           </div>
 
           {/* cooldown */}
