@@ -36,17 +36,39 @@ const EXAMPLE_NETWORKS_5: WiFiNetwork[] = [
 // Penalidade de um canal = a PIOR interferência que ele sofre (não a soma de todas).
 // Isso favorece o canal mais distante do vizinho mais próximo/forte, em vez de somar
 // pequenas interferências de várias redes fracas e descartar erroneamente um canal livre.
+// Compara os primeiros 5 bytes do MAC (OUI + 2 bytes do fabricante).
+// Roteadores multi-SSID atribuem BSSIDs sequencialmente no último byte
+// (ex: aa:bb:cc:dd:ee:01 para SSID principal, aa:bb:cc:dd:ee:02 para hidden),
+// então prefixo de 5 bytes identifica o mesmo hardware com boa precisão.
+function sameMacPrefix(a?: string, b?: string): boolean {
+  if (!a || !b) return false
+  const norm = (m: string) => m.toLowerCase().replace(/[^0-9a-f]/g, '')
+  const na = norm(a), nb = norm(b)
+  return na.length >= 10 && nb.length >= 10 && na.slice(0, 10) === nb.slice(0, 10)
+}
+
+// Retorna o SSID da rede nomeada cujo MAC tem o mesmo prefixo de 5 bytes
+// que a rede hidden (qualquer canal/banda), ou null se não houver match.
+function sameDeviceAs(hidden: WiFiNetwork, named: WiFiNetwork[]): string | null {
+  if (!hidden.bssid) return null
+  const match = named.find(m => sameMacPrefix(m.bssid, hidden.bssid))
+  return match?.ssid ?? null
+}
+
 // Descarta redes "Hidden" que provavelmente são o mesmo roteador do usuário sendo
-// reportado duas vezes (ex: radio de backhaul/IoT do próprio AP, ou duplicidade do
-// scan) — mesma banda e canal de uma rede nomeada, com sinal quase idêntico (±3dBm).
-// Sem isso, a interferência do próprio canal é inflada por "fantasmas".
+// reportado duas vezes — detectado por:
+//   1. MAC prefix idêntico a uma rede nomeada (mesma banda + canal): mais confiável
+//   2. Sinal quase idêntico (±3dBm) + mesma banda e canal: fallback quando sem BSSID
+// Redes hidden do mesmo equipamento mas em canal DIFERENTE ainda interferem de verdade,
+// logo são mantidas no cálculo (só o mesmo canal é duplicidade pura).
 function stripGhostHidden(networks: WiFiNetwork[]): WiFiNetwork[] {
   const named = networks.filter(n => n.ssid && n.ssid !== 'Hidden')
   return networks.filter(n => {
     if (n.ssid !== 'Hidden') return true
-    const isGhost = named.some(m =>
-      m.band === n.band && m.channel === n.channel && Math.abs(m.signal - n.signal) <= 3
-    )
+    const isGhost = named.some(m => m.band === n.band && m.channel === n.channel && (
+      sameMacPrefix(m.bssid, n.bssid) ||
+      (Math.abs(m.signal - n.signal) <= 3)
+    ))
     return !isGhost
   })
 }
@@ -626,14 +648,22 @@ export default function WiFiPage() {
               currentBandNets.map((net, i) => {
                 const signalPct = Math.max(0, Math.min(100, ((net.signal + 100) / 70) * 100))
                 const sigColor = signalPct > 60 ? '#00ff88' : signalPct > 30 ? '#ffd700' : '#ff4d4d'
+                const namedNets = currentBandNets.filter(n => n.ssid !== 'Hidden')
+                const sameDevice = net.ssid === 'Hidden' ? sameDeviceAs(net, namedNets) : null
                 return (
-                  <div key={i} className="bg-[#050a1a] rounded-lg px-3 py-2.5 border border-[#1a2744] flex items-center gap-3">
+                  <div key={i} className={clsx('bg-[#050a1a] rounded-lg px-3 py-2.5 border flex items-center gap-3', sameDevice ? 'border-yellow-500/20' : 'border-[#1a2744]')}>
                     <Wifi className="w-4 h-4 shrink-0" style={{ color: sigColor }} />
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm text-white font-medium truncate">{net.ssid}</span>
                         <span className="tag tag-cyan shrink-0">CH {net.channel}</span>
                         {net.width && net.width > 20 && <span className="tag tag-purple shrink-0">{net.width}MHz</span>}
+                        {sameDevice && (
+                          <span className="tag tag-yellow shrink-0 text-[10px]">Provável mesmo AP: {sameDevice}</span>
+                        )}
+                        {net.ssid === 'Hidden' && !sameDevice && net.bssid && (
+                          <span className="text-[10px] text-gray-600 font-mono shrink-0">{net.bssid}</span>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 mt-1">
                         <div className="progress-bar flex-1" style={{ height: 3 }}>
