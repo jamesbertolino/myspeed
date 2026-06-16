@@ -88,7 +88,7 @@ export default function NetworkPage() {
   const [traceTarget, setTraceTarget] = useState('8.8.8.8')
   const [traceHops, setTraceHops] = useState<TraceHop[]>([])
   const [traceLoading, setTraceLoading] = useState(false)
-  const [traceSimulated, setTraceSimulated] = useState(false)
+  const [traceError, setTraceError] = useState('')
 
   // DNS Benchmark state
   const [benchResults,  setBenchResults]  = useState<BenchResult[]>([])
@@ -152,13 +152,14 @@ export default function NetworkPage() {
   const runTraceroute = async () => {
     setTraceLoading(true)
     setTraceHops([])
+    setTraceError('')
     try {
       const res = await fetch(`/api/traceroute?target=${encodeURIComponent(traceTarget)}`)
       const data = await res.json()
       setTraceHops(data.hops || [])
-      setTraceSimulated(data.simulated || false)
+      if (data.error) setTraceError(data.error)
     } catch {
-      setTraceHops([])
+      setTraceError('Falha ao executar traceroute')
     } finally {
       setTraceLoading(false)
     }
@@ -401,10 +402,10 @@ export default function NetworkPage() {
             </button>
           </div>
 
-          {traceSimulated && (
-            <div className="flex items-center gap-2 text-xs text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 rounded-lg px-4 py-2">
+          {traceError && (
+            <div className="flex items-center gap-2 text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-2">
               <AlertTriangle className="w-4 h-4 shrink-0" />
-              Traceroute simulado — o servidor não tem permissão para executar traceroute real.
+              {traceError}
             </div>
           )}
 
