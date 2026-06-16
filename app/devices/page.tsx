@@ -293,6 +293,9 @@ function AIPanel({ analysis, onClose }: { analysis: AIAnalysis; onClose: () => v
 export default function DevicesPage() {
   const [scanning, setScanning] = useState(false)
   const [devices, setDevices] = useState<Device[]>([])
+  const [deviceSearch, setDeviceSearch] = useState('')
+  const [deviceRangeFilter, setDeviceRangeFilter] = useState('all')
+  const [deviceRiskFilter, setDeviceRiskFilter] = useState('all')
   const [progressMsg, setProgressMsg] = useState<string | null>(null)
   const [totalHosts, setTotalHosts] = useState<number | null>(null)
   const [scannedCount, setScannedCount] = useState(0)
@@ -404,6 +407,9 @@ export default function DevicesPage() {
     setCurrentIp(null)
     setProbeIndex(0)
     setScanPhase('idle')
+    setDeviceSearch('')
+    setDeviceRangeFilter('all')
+    setDeviceRiskFilter('all')
 
     let url: string
     let res: Response
@@ -562,6 +568,28 @@ export default function DevicesPage() {
   const scanDone = !scanning && elapsed !== null
   const hasDevices = devices.length > 0
   const progress = totalHosts ? Math.round((scannedCount / totalHosts) * 100) : 0
+
+  // sub-redes distintas (ex: 10.10.0.x e 10.10.1.x dentro de uma /23) p/ filtrar
+  const deviceRanges = Array.from(
+    new Set(devices.map(d => d.ip.split('.').slice(0, 3).join('.')))
+  ).sort((a, b) => {
+    const toNum = (s: string) => s.split('.').reduce((acc, o) => acc * 256 + Number(o), 0)
+    return toNum(a) - toNum(b)
+  })
+
+  const filteredDevices = devices
+    .filter(d => deviceRangeFilter === 'all' || d.ip.startsWith(deviceRangeFilter + '.'))
+    .filter(d => deviceRiskFilter === 'all' || d.riskLevel === deviceRiskFilter)
+    .filter(d => {
+      if (!deviceSearch.trim()) return true
+      const q = deviceSearch.trim().toLowerCase()
+      return (
+        d.ip.toLowerCase().includes(q) ||
+        (d.mac ?? '').toLowerCase().includes(q) ||
+        (d.hostname ?? '').toLowerCase().includes(q) ||
+        (d.vendor ?? '').toLowerCase().includes(q)
+      )
+    })
 
   return (
     <div className="p-4 md:p-8 space-y-6 max-w-5xl mx-auto">
@@ -799,18 +827,94 @@ export default function DevicesPage() {
             )}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {devices
-              .slice()
-              .sort((a, b) => {
-                const toNum = (ip: string) =>
-                  ip.split('.').reduce((acc, octet) => acc * 256 + Number(octet), 0)
-                return toNum(a.ip) - toNum(b.ip)
-              })
-              .map(device => (
-                <DeviceCard key={device.ip} device={device} />
+          {/* Filtros */}
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <input
+              type="text"
+              value={deviceSearch}
+              onChange={e => setDeviceSearch(e.target.value)}
+              placeholder="Buscar por IP, MAC, host ou fabricante..."
+              className="flex-1 min-w-[180px] bg-[#0a1128] border border-[#1a2744] text-gray-200 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-cyan-500/50 placeholder-gray-600 transition-all"
+            />
+
+            {deviceRanges.length > 1 && (
+              <div className="flex items-center gap-1 flex-wrap">
+                <button
+                  onClick={() => setDeviceRangeFilter('all')}
+                  className={clsx(
+                    'px-2.5 py-1.5 rounded-lg border text-xs font-mono transition-all',
+                    deviceRangeFilter === 'all'
+                      ? 'bg-cyan-500/15 border-cyan-500/40 text-cyan-300'
+                      : 'bg-white/3 border-[#1a2744] text-gray-400 hover:text-gray-200'
+                  )}
+                >
+                  Todas as sub-redes
+                </button>
+                {deviceRanges.map(range => (
+                  <button
+                    key={range}
+                    onClick={() => setDeviceRangeFilter(range)}
+                    className={clsx(
+                      'px-2.5 py-1.5 rounded-lg border text-xs font-mono transition-all',
+                      deviceRangeFilter === range
+                        ? 'bg-cyan-500/15 border-cyan-500/40 text-cyan-300'
+                        : 'bg-white/3 border-[#1a2744] text-gray-400 hover:text-gray-200'
+                    )}
+                  >
+                    {range}.x
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="flex items-center gap-1 flex-wrap">
+              {[
+                { v: 'all', label: 'Todos', color: 'text-gray-300' },
+                { v: 'critical', label: 'Crítico', color: 'text-red-400' },
+                { v: 'high', label: 'Alto', color: 'text-orange-400' },
+                { v: 'medium', label: 'Médio', color: 'text-yellow-400' },
+                { v: 'low', label: 'Baixo', color: 'text-green-400' },
+                { v: 'none', label: 'Seguro', color: 'text-gray-400' },
+              ].map(opt => (
+                <button
+                  key={opt.v}
+                  onClick={() => setDeviceRiskFilter(opt.v)}
+                  className={clsx(
+                    'px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-all',
+                    deviceRiskFilter === opt.v
+                      ? 'bg-white/10 border-white/20 ' + opt.color
+                      : 'bg-white/3 border-[#1a2744] text-gray-500 hover:text-gray-300'
+                  )}
+                >
+                  {opt.label}
+                </button>
               ))}
+            </div>
           </div>
+
+          {filteredDevices.length === 0 ? (
+            <div className="card text-center py-8 text-sm text-gray-500">
+              Nenhum dispositivo corresponde ao filtro aplicado.
+            </div>
+          ) : (
+            <>
+              <p className="text-[11px] text-gray-500 mb-2">
+                Mostrando {filteredDevices.length} de {devices.length} dispositivo{devices.length !== 1 ? 's' : ''}
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {filteredDevices
+                  .slice()
+                  .sort((a, b) => {
+                    const toNum = (ip: string) =>
+                      ip.split('.').reduce((acc, octet) => acc * 256 + Number(octet), 0)
+                    return toNum(a.ip) - toNum(b.ip)
+                  })
+                  .map(device => (
+                    <DeviceCard key={device.ip} device={device} />
+                  ))}
+              </div>
+            </>
+          )}
         </div>
       )}
 
