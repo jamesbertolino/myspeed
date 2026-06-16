@@ -24,8 +24,8 @@ function parseWindowsLine(line: string): Hop | null {
     return { hop, host: '*', ip: '*', latency: null, timeout: true }
   }
 
-  const times = Array.from(rest.matchAll(/<?\s*(\d+)\s*ms/gi)).map(t => parseInt(t[1]))
-  const latency = times.length ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : null
+  const times = Array.from(rest.matchAll(/<?\s*(\d+(?:\.\d+)?)\s*ms/gi)).map(t => parseFloat(t[1]))
+  const latency = times.length ? parseFloat((times.reduce((a, b) => a + b, 0) / times.length).toFixed(2)) : null
   const ipMatch = rest.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/)
   const ip = ipMatch ? ipMatch[1] : rest.trim().split(/\s+/).pop() ?? '*'
 
@@ -49,7 +49,7 @@ function parseUnixLine(line: string): Hop | null {
     hop,
     host:    hostMatch ? hostMatch[1] : ipOnly ? ipOnly[1] : '*',
     ip:      hostMatch ? hostMatch[2] : ipOnly ? ipOnly[1] : '*',
-    latency: timeMatch ? Math.round(parseFloat(timeMatch[1])) : null,
+    latency: timeMatch ? parseFloat(parseFloat(timeMatch[1]).toFixed(2)) : null,
     timeout: false,
   }
 }
