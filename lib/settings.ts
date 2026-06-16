@@ -20,6 +20,7 @@ export interface AppSettings {
   ecgPingInterval: number     // segundos entre medições do monitor ECG (padrão: 10)
   ecgPitchDev: number         // desvio de pitch do beep em % (padrão: 20)
   alerts: AlertThresholds
+  autoSpeedtest: number       // intervalo em horas (0 = desativado)
 }
 
 export const DEFAULT_ALERTS: AlertThresholds = {
@@ -43,6 +44,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ecgPingInterval: 10,
   ecgPitchDev: 20,
   alerts: DEFAULT_ALERTS,
+  autoSpeedtest: 0,
 }
 
 const KEY = 'myspeed_settings'

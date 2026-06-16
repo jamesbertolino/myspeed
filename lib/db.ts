@@ -21,7 +21,8 @@ db.exec(`
     upload    REAL    NOT NULL,
     server    TEXT,
     isp       TEXT,
-    ip        TEXT
+    ip        TEXT,
+    auto      INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS ping_history (

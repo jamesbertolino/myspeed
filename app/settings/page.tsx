@@ -238,6 +238,38 @@ export default function SettingsPage() {
         </div>
       </section>
 
+      {/* Teste Agendado */}
+      <section className="card p-5 mb-4">
+        <h2 className="text-sm font-semibold text-white mb-1">Teste de Velocidade Agendado</h2>
+        <p className="text-xs text-gray-500 mb-4">Executa automaticamente enquanto o browser estiver aberto</p>
+        <div className="flex gap-2 flex-wrap">
+          {[
+            { label: 'Desativado', value: 0 },
+            { label: '1h',  value: 1 },
+            { label: '3h',  value: 3 },
+            { label: '6h',  value: 6 },
+            { label: '12h', value: 12 },
+            { label: '24h', value: 24 },
+          ].map(({ label, value }) => (
+            <button key={value}
+              onClick={() => setSettings(s => ({ ...s, autoSpeedtest: value }))}
+              className={clsx('px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all',
+                settings.autoSpeedtest === value
+                  ? 'bg-cyan-500/10 border-cyan-500/30 text-[#00d4ff]'
+                  : 'border-[#1a2744] text-gray-400 hover:text-white hover:bg-white/5'
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {settings.autoSpeedtest > 0 && (
+          <p className="text-xs text-gray-600 mt-3">
+            Teste de ~10s a cada {settings.autoSpeedtest}h · resultado salvo no histórico com flag <span className="text-gray-500">auto</span>
+          </p>
+        )}
+      </section>
+
       {/* Alertas */}
       <section className="card p-5 mb-4">
         <div className="flex items-center justify-between mb-1">

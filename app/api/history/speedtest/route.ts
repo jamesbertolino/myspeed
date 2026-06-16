@@ -24,10 +24,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'missing fields' }, { status: 400 })
   }
 
+  const { auto } = body
   const result = db.prepare(`
-    INSERT INTO speedtest_history (ts, ping, jitter, download, upload, server, isp, ip)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(Date.now(), ping, jitter ?? 0, download, upload, server ?? null, isp ?? null, ip ?? null)
+    INSERT INTO speedtest_history (ts, ping, jitter, download, upload, server, isp, ip, auto)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(Date.now(), ping, jitter ?? 0, download, upload, server ?? null, isp ?? null, ip ?? null, auto ? 1 : 0)
 
   return NextResponse.json({ id: result.lastInsertRowid })
 }

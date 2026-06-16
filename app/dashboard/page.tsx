@@ -10,6 +10,11 @@ import StatCard from '@/components/StatCard'
 import { latencyColor, latencyLabel, calcJitter, jitterColor, jitterLabel, formatSpeed } from '@/lib/utils'
 import { loadSettings, AppSettings } from '@/lib/settings'
 import { checkAlerts, requestNotificationPermission } from '@/lib/alerts'
+
+const LAST_RUN_KEY = 'myspeed_auto_speedtest_last'
+function getLastAutoRun(): number {
+  try { return Number(localStorage.getItem(LAST_RUN_KEY) ?? 0) } catch { return 0 }
+}
 import clsx from 'clsx'
 
 interface IfaceStats {
@@ -48,6 +53,10 @@ export default function Dashboard() {
   const [lostPackets, setLostPackets] = useState(0)
   const pingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const latencyHistory = useRef<number[]>([])
+
+  // auto speedtest badge
+  const [lastAutoRun,    setLastAutoRun]    = useState(0)
+  const [autoRunning,    setAutoRunning]    = useState(false)
 
   // interface monitor
   const [ifaces,       setIfaces]       = useState<IfaceStats[]>([])
@@ -151,6 +160,20 @@ export default function Dashboard() {
     return () => { if (pingRef.current) clearInterval(pingRef.current) }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // atualiza badge do último teste automático a cada 30s
+  useEffect(() => {
+    const tick = () => {
+      setLastAutoRun(getLastAutoRun())
+      // detecta se auto-teste está rodando checando se mudou nos últimos 15s
+      const last = getLastAutoRun()
+      setAutoRunning(last > 0 && Date.now() - last < 15_000)
+    }
+    tick()
+    const id = setInterval(tick, 30_000)
+    window.addEventListener('myspeed-settings-changed', tick)
+    return () => { clearInterval(id); window.removeEventListener('myspeed-settings-changed', tick) }
+  }, [])
+
   // carrega lista de interfaces uma vez
   useEffect(() => {
     fetch('/api/interfaces')
@@ -203,9 +226,21 @@ export default function Dashboard() {
 
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto">
-      <div className="mb-6 md:mb-8">
-        <h1 className="text-xl md:text-2xl font-bold text-white">Dashboard</h1>
-        <p className="text-sm text-gray-500 mt-1">Monitoramento em tempo real da sua conexão</p>
+      <div className="mb-6 md:mb-8 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl md:text-2xl font-bold text-white">Dashboard</h1>
+          <p className="text-sm text-gray-500 mt-1">Monitoramento em tempo real da sua conexão</p>
+        </div>
+        {loadSettings().autoSpeedtest > 0 && (
+          <div className={clsx('flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs shrink-0', autoRunning ? 'bg-cyan-500/10 border-cyan-500/30 text-[#00d4ff]' : 'bg-white/5 border-white/10 text-gray-500')}>
+            <span className={clsx('w-1.5 h-1.5 rounded-full', autoRunning ? 'bg-[#00d4ff] animate-pulse' : 'bg-gray-600')} />
+            {autoRunning
+              ? 'Teste automático em andamento…'
+              : lastAutoRun > 0
+              ? `Último auto-teste: ${new Date(lastAutoRun).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+              : `Auto-teste a cada ${loadSettings().autoSpeedtest}h`}
+          </div>
+        )}
       </div>
 
       <div className="card p-4 mb-6">

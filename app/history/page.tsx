@@ -13,6 +13,7 @@ interface SpeedRow {
   download: number
   upload: number
   server?: string
+  auto: number
 }
 
 interface PingRow {
@@ -178,7 +179,10 @@ export default function HistoryPage() {
                           <td className="py-2 text-right mono text-gray-400">
                             {r.jitter.toFixed(1)}<span className="text-gray-600 ml-0.5">ms</span>
                           </td>
-                          <td className="py-2 pl-3 text-gray-500 truncate max-w-[120px]">{r.server ?? '—'}</td>
+                          <td className="py-2 pl-3 text-gray-500 truncate max-w-[120px]">
+                            {r.server ?? '—'}
+                            {!!r.auto && <span className="ml-1.5 text-[10px] px-1 py-0.5 rounded bg-white/5 text-gray-600">auto</span>}
+                          </td>
                           <td className="py-2 text-right">
                             <button onClick={() => deleteRow(r.id)} className="text-gray-700 hover:text-red-400 transition-colors">
                               <Trash2 className="w-3 h-3" />
