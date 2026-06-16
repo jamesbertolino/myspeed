@@ -52,6 +52,7 @@ interface NetworkIface {
   address: string
   subnet: string
   netmask: string
+  prefixLen?: number
   mac: string
 }
 
@@ -628,9 +629,7 @@ export default function DevicesPage() {
               )} />
               <span className="font-mono">{iface.name}</span>
               <span className="text-gray-500">·</span>
-              <span className="font-mono">{iface.address}</span>
-              <span className="text-gray-500 hidden sm:inline">·</span>
-              <span className="text-gray-500 hidden sm:inline">{iface.subnet}.0/24</span>
+              <span className="font-mono">{iface.address}/{iface.prefixLen ?? 24}</span>
             </button>
           ))}
         </div>
