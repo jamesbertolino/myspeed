@@ -7,7 +7,12 @@ export interface NetworkInterface {
   address: string
   subnet: string
   netmask: string
+  prefixLen: number
   mac: string
+}
+
+function netmaskToPrefixLen(netmask: string): number {
+  return netmask.split('.').map(Number).reduce((acc, octet) => acc + octet.toString(2).split('1').length - 1, 0)
 }
 
 function getPrivateInterfaces(): NetworkInterface[] {
@@ -29,6 +34,7 @@ function getPrivateInterfaces(): NetworkInterface[] {
         address: iface.address,
         subnet: `${parts[0]}.${parts[1]}.${parts[2]}`,
         netmask: iface.netmask,
+        prefixLen: netmaskToPrefixLen(iface.netmask),
         mac: iface.mac,
       })
     }

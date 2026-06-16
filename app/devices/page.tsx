@@ -52,6 +52,7 @@ interface NetworkIface {
   address: string
   subnet: string
   netmask: string
+  prefixLen?: number
   mac: string
 }
 
@@ -111,15 +112,17 @@ function PortBadge({ p }: { p: OpenPort }) {
   )
 }
 
-function DeviceCard({ device }: { device: Device }) {
+function DeviceCard({ device, onSelect }: { device: Device; onSelect: (d: Device) => void }) {
   const [expanded, setExpanded] = useState(false)
   const hasPorts = device.openPorts.length > 0
   const visiblePorts = expanded ? device.openPorts : device.openPorts.slice(0, 4)
   const extra = device.openPorts.length - 4
 
   return (
-    <div className={clsx(
-      'card border transition-all',
+    <div
+      onClick={() => onSelect(device)}
+      className={clsx(
+      'card border transition-all cursor-pointer hover:border-cyan-500/40',
       device.riskLevel === 'critical' ? 'border-red-500/30 bg-red-500/5' :
       device.riskLevel === 'high'     ? 'border-orange-500/20' :
       device.riskLevel === 'medium'   ? 'border-yellow-500/20' :
@@ -153,7 +156,7 @@ function DeviceCard({ device }: { device: Device }) {
             {visiblePorts.map(p => <PortBadge key={p.port} p={p} />)}
             {!expanded && extra > 0 && (
               <button
-                onClick={() => setExpanded(true)}
+                onClick={(e) => { e.stopPropagation(); setExpanded(true) }}
                 className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-[#1a2744] text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
               >
                 +{extra} <ChevronDown className="w-3 h-3" />
@@ -161,7 +164,7 @@ function DeviceCard({ device }: { device: Device }) {
             )}
             {expanded && extra > 0 && (
               <button
-                onClick={() => setExpanded(false)}
+                onClick={(e) => { e.stopPropagation(); setExpanded(false) }}
                 className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-[#1a2744] text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
               >
                 <ChevronUp className="w-3 h-3" />
@@ -172,6 +175,142 @@ function DeviceCard({ device }: { device: Device }) {
       ) : (
         <p className="text-[11px] text-gray-600">Nenhuma porta vulnerável detectada</p>
       )}
+    </div>
+  )
+}
+
+interface PingSample { ts: number; ms: number; ok: boolean }
+
+function DeviceDetailModal({ device, onClose }: { device: Device; onClose: () => void }) {
+  const [pinging, setPinging] = useState(false)
+  const [samples, setSamples] = useState<PingSample[]>([])
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const pingOnce = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/ping?target=${device.ip}&_=${Date.now()}`, { cache: 'no-store' })
+      const data = await res.json()
+      setSamples(prev => [...prev.slice(-19), { ts: Date.now(), ms: data.ms, ok: data.ok }])
+    } catch {
+      setSamples(prev => [...prev.slice(-19), { ts: Date.now(), ms: -1, ok: false }])
+    }
+  }, [device.ip])
+
+  const toggleLivePing = () => {
+    if (pinging) {
+      if (timerRef.current) clearInterval(timerRef.current)
+      timerRef.current = null
+      setPinging(false)
+      return
+    }
+    setPinging(true)
+    pingOnce()
+    timerRef.current = setInterval(pingOnce, 2000)
+  }
+
+  useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current) }, [])
+
+  const last = samples[samples.length - 1]
+  const avg = samples.filter(s => s.ok).length
+    ? Math.round(samples.filter(s => s.ok).reduce((a, s) => a + s.ms, 0) / samples.filter(s => s.ok).length)
+    : null
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="card w-full max-w-md border border-[#1a2744] max-h-[85vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-2 mb-4">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-9 h-9 rounded-lg bg-[#0f1a35] border border-[#1a2744] flex items-center justify-center shrink-0">
+              <Monitor className="w-4 h-4 text-cyan-400" />
+            </div>
+            <div className="min-w-0">
+              <p className="font-mono text-base text-white font-semibold">{device.ip}</p>
+              {device.vendor && <p className="text-[11px] text-gray-400 truncate">{device.vendor}</p>}
+            </div>
+          </div>
+          <button onClick={onClose} className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors">
+            Fechar
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <div className="bg-[#0f1a35] border border-[#1a2744] rounded-lg p-2.5">
+            <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-0.5">Hostname</p>
+            <p className="text-xs text-white truncate">{device.hostname ?? '—'}</p>
+          </div>
+          <div className="bg-[#0f1a35] border border-[#1a2744] rounded-lg p-2.5">
+            <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-0.5">MAC</p>
+            <p className="text-xs text-white font-mono truncate">{device.mac ?? '—'}</p>
+          </div>
+          <div className="bg-[#0f1a35] border border-[#1a2744] rounded-lg p-2.5">
+            <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-0.5">Risco</p>
+            <RiskBadge level={device.riskLevel} />
+          </div>
+          <div className="bg-[#0f1a35] border border-[#1a2744] rounded-lg p-2.5">
+            <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-0.5">Portas abertas</p>
+            <p className="text-xs text-white">{device.openPorts.length}</p>
+          </div>
+        </div>
+
+        {device.openPorts.length > 0 && (
+          <div className="mb-4">
+            <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-1.5 font-medium">Portas</p>
+            <div className="flex flex-wrap gap-1">
+              {device.openPorts.map(p => <PortBadge key={p.port} p={p} />)}
+            </div>
+          </div>
+        )}
+
+        <div className="border-t border-[#1a2744] pt-3">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-semibold text-white">Ping ao vivo</p>
+            <button
+              onClick={toggleLivePing}
+              className={clsx(
+                'px-3 py-1 rounded-lg text-[11px] font-semibold transition-colors',
+                pinging ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25' : 'btn-cyan'
+              )}
+            >
+              {pinging ? 'Parar' : 'Iniciar'}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 mb-2">
+            <div className="bg-[#0f1a35] border border-[#1a2744] rounded-lg p-2.5">
+              <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-0.5">Último</p>
+              <p className={clsx('text-sm font-mono', last && !last.ok ? 'text-red-400' : 'text-white')}>
+                {last ? (last.ok ? `${last.ms} ms` : 'timeout') : '—'}
+              </p>
+            </div>
+            <div className="bg-[#0f1a35] border border-[#1a2744] rounded-lg p-2.5">
+              <p className="text-[10px] text-gray-500 uppercase tracking-wide mb-0.5">Média</p>
+              <p className="text-sm font-mono text-white">{avg !== null ? `${avg} ms` : '—'}</p>
+            </div>
+          </div>
+
+          {samples.length > 0 && (
+            <div className="flex items-end gap-0.5 h-12">
+              {samples.map((s, i) => {
+                const h = s.ok ? Math.min(100, Math.max(8, (s.ms / 150) * 100)) : 100
+                return (
+                  <div
+                    key={i}
+                    title={s.ok ? `${s.ms} ms` : 'timeout'}
+                    className={clsx('flex-1 rounded-sm', s.ok ? 'bg-cyan-500/60' : 'bg-red-500/60')}
+                    style={{ height: `${h}%` }}
+                  />
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -292,11 +431,19 @@ function AIPanel({ analysis, onClose }: { analysis: AIAnalysis; onClose: () => v
 export default function DevicesPage() {
   const [scanning, setScanning] = useState(false)
   const [devices, setDevices] = useState<Device[]>([])
+  const [selectedDevice, setSelectedDevice] = useState<Device | null>(null)
+  const [deviceSearch, setDeviceSearch] = useState('')
+  const [deviceRangeFilter, setDeviceRangeFilter] = useState('all')
+  const [deviceRiskFilter, setDeviceRiskFilter] = useState('all')
   const [progressMsg, setProgressMsg] = useState<string | null>(null)
   const [totalHosts, setTotalHosts] = useState<number | null>(null)
   const [scannedCount, setScannedCount] = useState(0)
   const [scanError, setScanError] = useState<string | null>(null)
   const [elapsed, setElapsed] = useState<number | null>(null)
+  const [currentIp, setCurrentIp] = useState<string | null>(null)
+  const [probeIndex, setProbeIndex] = useState(0)
+  const [probeTotal, setProbeTotal] = useState(254)
+  const [scanPhase, setScanPhase] = useState<'idle' | 'discovery' | 'ports'>('idle')
   const [aiAnalysis, setAiAnalysis] = useState<AIAnalysis | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [analyzeError, setAnalyzeError] = useState<string | null>(null)
@@ -355,10 +502,19 @@ export default function DevicesPage() {
     switch (event.type) {
       case 'progress':
         setProgressMsg(event.message as string)
+        setScanPhase('discovery')
+        if (event.total) setProbeTotal(event.total as number)
+        break
+      case 'scanning':
+        setCurrentIp(event.ip as string)
+        setProbeIndex(event.index as number)
+        setProbeTotal(event.total as number)
         break
       case 'hosts':
         setTotalHosts(event.count as number)
         setProgressMsg(null)
+        setCurrentIp(null)
+        setScanPhase('ports')
         break
       case 'device':
         setDevices(prev => [...prev, event.device as Device])
@@ -366,6 +522,8 @@ export default function DevicesPage() {
         break
       case 'done':
         setElapsed(event.elapsed as number)
+        setScanPhase('idle')
+        setCurrentIp(null)
         break
     }
   }, [])
@@ -385,6 +543,12 @@ export default function DevicesPage() {
     setElapsed(null)
     setAiAnalysis(null)
     setAnalyzeError(null)
+    setCurrentIp(null)
+    setProbeIndex(0)
+    setScanPhase('idle')
+    setDeviceSearch('')
+    setDeviceRangeFilter('all')
+    setDeviceRiskFilter('all')
 
     let url: string
     let res: Response
@@ -415,8 +579,9 @@ export default function DevicesPage() {
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split('\n')
         buffer = lines.pop() ?? ''
-        for (const line of lines) {
-          if (!line.trim()) continue
+        for (const raw of lines) {
+          const line = raw.replace(/^data:\s*/, '').trim()
+          if (!line) continue
           try { handleEvent(JSON.parse(line)) } catch (_) {}
         }
       }
@@ -543,6 +708,28 @@ export default function DevicesPage() {
   const hasDevices = devices.length > 0
   const progress = totalHosts ? Math.round((scannedCount / totalHosts) * 100) : 0
 
+  // sub-redes distintas (ex: 10.10.0.x e 10.10.1.x dentro de uma /23) p/ filtrar
+  const deviceRanges = Array.from(
+    new Set(devices.map(d => d.ip.split('.').slice(0, 3).join('.')))
+  ).sort((a, b) => {
+    const toNum = (s: string) => s.split('.').reduce((acc, o) => acc * 256 + Number(o), 0)
+    return toNum(a) - toNum(b)
+  })
+
+  const filteredDevices = devices
+    .filter(d => deviceRangeFilter === 'all' || d.ip.startsWith(deviceRangeFilter + '.'))
+    .filter(d => deviceRiskFilter === 'all' || d.riskLevel === deviceRiskFilter)
+    .filter(d => {
+      if (!deviceSearch.trim()) return true
+      const q = deviceSearch.trim().toLowerCase()
+      return (
+        d.ip.toLowerCase().includes(q) ||
+        (d.mac ?? '').toLowerCase().includes(q) ||
+        (d.hostname ?? '').toLowerCase().includes(q) ||
+        (d.vendor ?? '').toLowerCase().includes(q)
+      )
+    })
+
   return (
     <div className="p-4 md:p-8 space-y-6 max-w-5xl mx-auto">
       {/* Header */}
@@ -585,42 +772,63 @@ export default function DevicesPage() {
       </div>
 
       {/* Interface selector */}
-      {interfaces.length > 0 && (
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-lg bg-[#0b1527] border border-[#1a2744]">
-          <div className="flex items-center gap-2 shrink-0">
-            <Router className="w-4 h-4 text-cyan-400" />
-            <span className="text-sm font-medium text-gray-300">Interface de rede:</span>
-          </div>
-          <div className="flex flex-wrap gap-2 flex-1">
-            {interfaces.map(iface => (
-              <button
-                key={iface.subnet}
-                disabled={scanning}
-                onClick={() => setSelectedSubnet(iface.subnet)}
-                className={clsx(
-                  'flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all',
-                  selectedSubnet === iface.subnet
-                    ? 'bg-cyan-500/15 border-cyan-500/40 text-cyan-300'
-                    : 'bg-white/3 border-[#1a2744] text-gray-400 hover:border-cyan-500/30 hover:text-gray-200'
-                )}
-              >
-                <span className={clsx(
-                  'w-1.5 h-1.5 rounded-full shrink-0',
-                  selectedSubnet === iface.subnet ? 'bg-cyan-400' : 'bg-gray-600'
-                )} />
-                <span className="font-mono">{iface.name}</span>
-                <span className="text-gray-500">·</span>
-                <span className="font-mono">{iface.address}</span>
-                <span className="text-gray-500 hidden sm:inline">·</span>
-                <span className="text-gray-500 hidden sm:inline">{iface.subnet}.0/24</span>
-              </button>
-            ))}
-          </div>
-          {interfaces.length === 1 && (
-            <span className="text-[11px] text-gray-600">Apenas uma interface disponível</span>
-          )}
+      <div className="flex flex-col gap-3 p-4 rounded-lg bg-[#0b1527] border border-[#1a2744]">
+        <div className="flex items-center gap-2">
+          <Router className="w-4 h-4 text-cyan-400" />
+          <span className="text-sm font-medium text-gray-300">Interface de rede:</span>
         </div>
-      )}
+        <div className="flex flex-wrap gap-2">
+          {interfaces.map(iface => (
+            <button
+              key={iface.subnet}
+              disabled={scanning}
+              onClick={() => setSelectedSubnet(iface.subnet)}
+              className={clsx(
+                'flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all',
+                selectedSubnet === iface.subnet
+                  ? 'bg-cyan-500/15 border-cyan-500/40 text-cyan-300'
+                  : 'bg-white/3 border-[#1a2744] text-gray-400 hover:border-cyan-500/30 hover:text-gray-200'
+              )}
+            >
+              <span className={clsx(
+                'w-1.5 h-1.5 rounded-full shrink-0',
+                selectedSubnet === iface.subnet ? 'bg-cyan-400' : 'bg-gray-600'
+              )} />
+              <span className="font-mono">{iface.name}</span>
+              <span className="text-gray-500">·</span>
+              <span className="font-mono">{iface.address}/{iface.prefixLen ?? 24}</span>
+            </button>
+          ))}
+        </div>
+        {/* Campo personalizado */}
+        <div className="flex items-center gap-2 pt-1 border-t border-[#1a2744]">
+          <span className="text-xs text-gray-500 shrink-0">Rede personalizada:</span>
+          <div className="flex items-center gap-1 flex-1">
+            <input
+              type="text"
+              disabled={scanning}
+              placeholder="ex: 10.0.0"
+              value={!interfaces.some(i => i.subnet === selectedSubnet) ? selectedSubnet : ''}
+              onChange={e => {
+                const v = e.target.value.replace(/[^0-9.]/g, '')
+                setSelectedSubnet(v)
+              }}
+              onKeyDown={e => { if (e.key === 'Enter' && selectedSubnet) startScan(selectedSubnet) }}
+              className="flex-1 max-w-[160px] bg-[#0a1128] border border-[#1a2744] text-gray-200 rounded-lg px-3 py-1.5 text-xs font-mono outline-none focus:border-cyan-500/50 placeholder-gray-700 transition-all"
+            />
+            <span className="text-xs text-gray-600 font-mono">.0/24</span>
+            {!interfaces.some(i => i.subnet === selectedSubnet) && selectedSubnet.match(/^\d+\.\d+\.\d+$/) && (
+              <button
+                disabled={scanning}
+                onClick={() => startScan(selectedSubnet)}
+                className="px-3 py-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/40 text-cyan-300 text-xs font-medium hover:bg-cyan-500/25 transition-all disabled:opacity-40"
+              >
+                Varrer
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
 
       {/* Agent status banner */}
       {agentChecked && (
@@ -647,25 +855,62 @@ export default function DevicesPage() {
       {/* Progress */}
       {scanning && (
         <div className="card space-y-3">
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-400">
-              {progressMsg || (totalHosts !== null
-                ? `Escaneando portas: ${scannedCount} / ${totalHosts} dispositivos`
-                : 'Descobrindo dispositivos...')}
-            </span>
-            {totalHosts !== null && (
-              <span className="text-cyan-400 font-mono">{progress}%</span>
+          {/* fase + label */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className={clsx(
+                'w-2 h-2 rounded-full shrink-0 animate-pulse',
+                scanPhase === 'discovery' ? 'bg-cyan-400' : 'bg-purple-400'
+              )} />
+              <span className="text-sm text-gray-300 font-medium">
+                {scanPhase === 'ports'
+                  ? `Analisando portas: ${scannedCount} / ${totalHosts} dispositivos`
+                  : 'Fase 1 — Descoberta de hosts'}
+              </span>
+            </div>
+            {scanPhase === 'ports' && totalHosts != null && (
+              <span className="text-cyan-400 font-mono text-sm shrink-0">{progress}%</span>
+            )}
+            {scanPhase === 'discovery' && (
+              <span className="text-cyan-400 font-mono text-xs shrink-0">
+                {probeIndex} / {probeTotal}
+              </span>
             )}
           </div>
+
+          {/* barra de progresso */}
           <div className="w-full h-1.5 bg-[#1a2744] rounded-full overflow-hidden">
-            <div
-              className="h-full bg-gradient-to-r from-cyan-500 to-purple-500 rounded-full transition-all duration-500"
-              style={{ width: totalHosts ? `${progress}%` : '0%' }}
-            />
+            {scanPhase === 'discovery' ? (
+              <div
+                className="h-full bg-gradient-to-r from-cyan-500 to-cyan-300 rounded-full transition-all duration-100"
+                style={{ width: `${Math.round((probeIndex / probeTotal) * 100)}%` }}
+              />
+            ) : (
+              <div
+                className="h-full bg-gradient-to-r from-cyan-500 to-purple-500 rounded-full transition-all duration-500"
+                style={{ width: totalHosts ? `${progress}%` : '0%' }}
+              />
+            )}
           </div>
-          {devices.length > 0 && (
+
+          {/* IP atual sendo sondado */}
+          {scanPhase === 'discovery' && currentIp && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#050a1a] border border-cyan-500/20">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping shrink-0" />
+              <span className="text-xs text-gray-500">Sondando:</span>
+              <span className="font-mono text-sm text-cyan-300 font-semibold tracking-wider">{currentIp}</span>
+              {devices.length > 0 && (
+                <span className="ml-auto text-xs text-green-400 font-medium">
+                  {devices.length} online
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* fase de portas — dispositivos encontrados */}
+          {scanPhase === 'ports' && devices.length > 0 && (
             <p className="text-xs text-gray-500">
-              {devices.length} dispositivo{devices.length !== 1 ? 's' : ''} encontrado{devices.length !== 1 ? 's' : ''} até agora...
+              {devices.length} dispositivo{devices.length !== 1 ? 's' : ''} encontrado{devices.length !== 1 ? 's' : ''} · analisando portas abertas…
             </p>
           )}
         </div>
@@ -721,18 +966,99 @@ export default function DevicesPage() {
             )}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {devices
-              .slice()
-              .sort((a, b) => {
-                const order = { critical: 0, high: 1, medium: 2, low: 3, none: 4 }
-                return (order[a.riskLevel] ?? 5) - (order[b.riskLevel] ?? 5)
-              })
-              .map(device => (
-                <DeviceCard key={device.ip} device={device} />
+          {/* Filtros */}
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <input
+              type="text"
+              value={deviceSearch}
+              onChange={e => setDeviceSearch(e.target.value)}
+              placeholder="Buscar por IP, MAC, host ou fabricante..."
+              className="flex-1 min-w-[180px] bg-[#0a1128] border border-[#1a2744] text-gray-200 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-cyan-500/50 placeholder-gray-600 transition-all"
+            />
+
+            {deviceRanges.length > 1 && (
+              <div className="flex items-center gap-1 flex-wrap">
+                <button
+                  onClick={() => setDeviceRangeFilter('all')}
+                  className={clsx(
+                    'px-2.5 py-1.5 rounded-lg border text-xs font-mono transition-all',
+                    deviceRangeFilter === 'all'
+                      ? 'bg-cyan-500/15 border-cyan-500/40 text-cyan-300'
+                      : 'bg-white/3 border-[#1a2744] text-gray-400 hover:text-gray-200'
+                  )}
+                >
+                  Todas as sub-redes
+                </button>
+                {deviceRanges.map(range => (
+                  <button
+                    key={range}
+                    onClick={() => setDeviceRangeFilter(range)}
+                    className={clsx(
+                      'px-2.5 py-1.5 rounded-lg border text-xs font-mono transition-all',
+                      deviceRangeFilter === range
+                        ? 'bg-cyan-500/15 border-cyan-500/40 text-cyan-300'
+                        : 'bg-white/3 border-[#1a2744] text-gray-400 hover:text-gray-200'
+                    )}
+                  >
+                    {range}.x
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="flex items-center gap-1 flex-wrap">
+              {[
+                { v: 'all', label: 'Todos', color: 'text-gray-300' },
+                { v: 'critical', label: 'Crítico', color: 'text-red-400' },
+                { v: 'high', label: 'Alto', color: 'text-orange-400' },
+                { v: 'medium', label: 'Médio', color: 'text-yellow-400' },
+                { v: 'low', label: 'Baixo', color: 'text-green-400' },
+                { v: 'none', label: 'Seguro', color: 'text-gray-400' },
+              ].map(opt => (
+                <button
+                  key={opt.v}
+                  onClick={() => setDeviceRiskFilter(opt.v)}
+                  className={clsx(
+                    'px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-all',
+                    deviceRiskFilter === opt.v
+                      ? 'bg-white/10 border-white/20 ' + opt.color
+                      : 'bg-white/3 border-[#1a2744] text-gray-500 hover:text-gray-300'
+                  )}
+                >
+                  {opt.label}
+                </button>
               ))}
+            </div>
           </div>
+
+          {filteredDevices.length === 0 ? (
+            <div className="card text-center py-8 text-sm text-gray-500">
+              Nenhum dispositivo corresponde ao filtro aplicado.
+            </div>
+          ) : (
+            <>
+              <p className="text-[11px] text-gray-500 mb-2">
+                Mostrando {filteredDevices.length} de {devices.length} dispositivo{devices.length !== 1 ? 's' : ''}
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {filteredDevices
+                  .slice()
+                  .sort((a, b) => {
+                    const toNum = (ip: string) =>
+                      ip.split('.').reduce((acc, octet) => acc * 256 + Number(octet), 0)
+                    return toNum(a.ip) - toNum(b.ip)
+                  })
+                  .map(device => (
+                    <DeviceCard key={device.ip} device={device} onSelect={setSelectedDevice} />
+                  ))}
+              </div>
+            </>
+          )}
         </div>
+      )}
+
+      {selectedDevice && (
+        <DeviceDetailModal device={selectedDevice} onClose={() => setSelectedDevice(null)} />
       )}
 
       {/* Empty state */}

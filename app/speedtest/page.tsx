@@ -6,6 +6,8 @@ import SpeedGauge from '@/components/SpeedGauge'
 import ServerSelector from '@/components/ServerSelector'
 import { TestServer } from '@/lib/servers'
 import { formatSpeed, latencyColor, latencyLabel, calcJitter, jitterLabel } from '@/lib/utils'
+import { loadSettings } from '@/lib/settings'
+import { checkAlerts } from '@/lib/alerts'
 import clsx from 'clsx'
 
 type Phase = 'idle' | 'pretest' | 'ping' | 'download' | 'upload' | 'done'
@@ -26,6 +28,7 @@ interface Result {
   download: number
   upload: number
   timestamp: number
+  server?: string
 }
 
 const MAX_GAUGE = 1000 // Mbps
@@ -62,6 +65,23 @@ export default function SpeedTestPage() {
     update()
     window.addEventListener('resize', update)
     return () => window.removeEventListener('resize', update)
+  }, [])
+
+  // carrega histórico persistido
+  useEffect(() => {
+    fetch('/api/history/speedtest?limit=20')
+      .then(r => r.json())
+      .then(d => {
+        if (d.rows?.length) {
+          setHistory(d.rows.map((r: Record<string, unknown>) => ({
+            ping: r.ping, jitter: r.jitter,
+            download: r.download, upload: r.upload,
+            timestamp: r.ts,
+            server: r.server ?? undefined,
+          })))
+        }
+      })
+      .catch(() => {})
   }, [])
 
   // Background speed calibration on page load — runs while server selector pings
@@ -108,24 +128,41 @@ export default function SpeedTestPage() {
   }, [])
 
   const measurePing = async (srv: TestServer): Promise<{ avg: number; jitter: number }> => {
-    const samples: number[] = []
-    for (let i = 0; i < PING_SAMPLES; i++) {
-      if (cancelledRef.current) throw new Error('cancelled')
-      const t0 = performance.now()
-      const pingIsExternal = srv.pingUrl.startsWith('http')
-      let pingUrl = pingIsExternal ? `${srv.pingUrl}?_=${Date.now()}` : `${srv.pingUrl}&_=${Date.now()}`
-      // Upgrade to HTTPS on secure pages to avoid mixed-content blocking
-      if (pingIsExternal && window.location.protocol === 'https:') {
-        pingUrl = pingUrl.replace(/^http:\/\//, 'https://')
-      }
-      await fetch(pingUrl, { cache: 'no-store', ...(pingIsExternal ? { mode: 'no-cors' } : {}) })
-      samples.push(performance.now() - t0)
-      setCurrentPing(samples[samples.length - 1])
-      setProgress(Math.round(((i + 1) / PING_SAMPLES) * 100))
-      await new Promise(r => setTimeout(r, PING_INTERVAL_MS))
+    if (cancelledRef.current) throw new Error('cancelled')
+
+    // extrai o hostname alvo para ICMP
+    let host: string
+    if (srv.pingUrl.startsWith('http')) {
+      host = new URL(srv.pingUrl).hostname
+    } else {
+      // /api/speedtest/ping?target=hostname
+      host = new URL(srv.pingUrl, 'http://localhost').searchParams.get('target') ?? ''
     }
-    const avg = samples.reduce((a, b) => a + b, 0) / samples.length
-    return { avg, jitter: calcJitter(samples) }
+
+    // animação de progresso enquanto o ICMP roda no servidor (~3s para 15 amostras)
+    setProgress(0)
+    const tickMs = (PING_SAMPLES * (PING_INTERVAL_MS + 80)) / 100
+    const timer  = setInterval(() => setProgress(p => Math.min(p + 1, 95)), tickMs)
+
+    try {
+      const res  = await fetch(
+        `/api/speedtest/ping?target=${encodeURIComponent(host)}&count=${PING_SAMPLES}&_=${Date.now()}`,
+        { cache: 'no-store' }
+      )
+      const data = await res.json()
+      if (data.avg < 0) throw new Error('timeout')
+
+      // mostra as amostras individualmente no gauge de ping
+      for (const s of (data.samples as number[])) {
+        setCurrentPing(s)
+        await new Promise(r => setTimeout(r, 60))
+      }
+
+      setProgress(100)
+      return { avg: data.ping, jitter: data.jitter }
+    } finally {
+      clearInterval(timer)
+    }
   }
 
   const measurePreTest = async (srv: TestServer): Promise<number> => {
@@ -299,10 +336,25 @@ export default function SpeedTestPage() {
         download: downloadMbps,
         upload: uploadMbps,
         timestamp: Date.now(),
+        server: srv?.name,
       }
       setResult(res)
       setHistory(prev => [res, ...prev.slice(0, 9)])
       setPhase('done')
+
+      // verifica alertas de velocidade
+      checkAlerts(loadSettings().alerts, { downloadMbps: res.download, uploadMbps: res.upload, pingMs: res.ping })
+
+      // persiste no banco
+      fetch('/api/history/speedtest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ping: res.ping, jitter: res.jitter,
+          download: res.download, upload: res.upload,
+          server: srv?.name ?? null,
+        }),
+      }).catch(() => {})
     } catch {
       setPhase('idle')
     }
@@ -520,6 +572,7 @@ export default function SpeedTestPage() {
               <thead>
                 <tr className="text-xs text-gray-500 uppercase tracking-wider border-b border-[#1a2744]">
                   <th className="text-left pb-2">Horário</th>
+                  <th className="text-left pb-2 pl-3">Servidor</th>
                   <th className="text-right pb-2">Download</th>
                   <th className="text-right pb-2">Upload</th>
                   <th className="text-right pb-2">Ping</th>
@@ -535,6 +588,7 @@ export default function SpeedTestPage() {
                       <td className="py-2 text-gray-400 mono text-xs">
                         {new Date(r.timestamp).toLocaleTimeString('pt-BR')}
                       </td>
+                      <td className="py-2 pl-3 text-xs text-gray-400 truncate max-w-[110px]">{r.server ?? '—'}</td>
                       <td className="py-2 text-right mono text-[#00d4ff]">{dl.value} <span className="text-gray-500 text-xs">{dl.unit}</span></td>
                       <td className="py-2 text-right mono text-[#7b2fff]">{ul.value} <span className="text-gray-500 text-xs">{ul.unit}</span></td>
                       <td className="py-2 text-right mono" style={{ color: latencyColor(r.ping) }}>{r.ping.toFixed(1)} <span className="text-gray-500 text-xs">ms</span></td>

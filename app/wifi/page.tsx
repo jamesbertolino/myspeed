@@ -1,12 +1,12 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
-import { Wifi, Plus, Trash2, Info, CheckCircle, AlertTriangle, Radio, ScanLine, RefreshCw, Puzzle, Sparkles, ShieldCheck, ShieldAlert, ShieldX, TrendingUp, Terminal, Smartphone } from 'lucide-react'
+import { Wifi, Plus, Trash2, Info, CheckCircle, AlertTriangle, Radio, ScanLine, RefreshCw, Puzzle, Sparkles, ShieldCheck, ShieldAlert, ShieldX, TrendingUp, Terminal, Smartphone, FileDown } from 'lucide-react'
 import WiFiChannelMap, { WiFiNetwork } from '@/components/WiFiChannelMap'
 import { NON_OVERLAPPING_24, NON_OVERLAPPING_5 } from '@/lib/utils'
 import clsx from 'clsx'
 
-interface AIAnalysis {
+export interface AIAnalysis {
   summary: string
   score: number
   scoreLabel: string
@@ -62,6 +62,7 @@ export default function WiFiPage() {
   const [agentPlatform, setAgentPlatform] = useState<string | null>(null)
   const [aiAnalysis, setAiAnalysis] = useState<AIAnalysis | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   // Detect Chrome extension
   useEffect(() => {
@@ -181,6 +182,18 @@ export default function WiFiPage() {
 
   const currentBandNets = networks.filter(n => n.band === band)
   const recommended = bestChannel(networks, band)
+  const recommended24 = bestChannel(networks, '2.4')
+  const recommended5  = bestChannel(networks, '5')
+
+  const handleExportPdf = async () => {
+    setExporting(true)
+    try {
+      const { exportWifiPdf } = await import('@/lib/exportWifiPdf')
+      await exportWifiPdf(networks, recommended24, recommended5, aiAnalysis, isRealData)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const addNetwork = () => {
     if (!newNet.ssid || !newNet.channel || !newNet.signal) return
@@ -216,16 +229,28 @@ export default function WiFiPage() {
             {isRealData && <span className="ml-2 tag tag-green">Dados reais</span>}
           </p>
         </div>
-        <button
-          onClick={scanNetworks}
-          disabled={scanning}
-          className="btn-cyan px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 shrink-0 disabled:opacity-50"
-        >
-          {scanning
-            ? <RefreshCw className="w-4 h-4 animate-spin" />
-            : <ScanLine className="w-4 h-4" />}
-          {scanning ? 'Escaneando...' : 'Escanear Redes'}
-        </button>
+        <div className="flex gap-2 shrink-0">
+          <button
+            onClick={handleExportPdf}
+            disabled={exporting || networks.length === 0}
+            className="btn-purple px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 disabled:opacity-40"
+          >
+            {exporting
+              ? <RefreshCw className="w-4 h-4 animate-spin" />
+              : <FileDown className="w-4 h-4" />}
+            {exporting ? 'Gerando...' : 'Exportar PDF'}
+          </button>
+          <button
+            onClick={scanNetworks}
+            disabled={scanning}
+            className="btn-cyan px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 disabled:opacity-50"
+          >
+            {scanning
+              ? <RefreshCw className="w-4 h-4 animate-spin" />
+              : <ScanLine className="w-4 h-4" />}
+            {scanning ? 'Escaneando...' : 'Escanear Redes'}
+          </button>
+        </div>
       </div>
 
       {/* Status do scanner */}
@@ -379,7 +404,13 @@ export default function WiFiPage() {
             <span className="tag tag-green">CH {recommended}</span>
           </div>
         </div>
-        <WiFiChannelMap band={band} networks={networks} highlight={recommended} />
+        {/* ambos sempre no DOM — inativo posicionado fora da tela para o html2canvas conseguir capturar */}
+        <div id="wifi-channel-map-24" style={band !== '2.4' ? { position: 'absolute', left: '-9999px', width: '900px' } : {}}>
+          <WiFiChannelMap band="2.4" networks={networks} highlight={recommended24} />
+        </div>
+        <div id="wifi-channel-map-5" style={band !== '5' ? { position: 'absolute', left: '-9999px', width: '900px' } : {}}>
+          <WiFiChannelMap band="5" networks={networks} highlight={recommended5} />
+        </div>
       </div>
 
       {/* Networks List + Add */}

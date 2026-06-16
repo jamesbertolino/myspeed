@@ -70,6 +70,11 @@ function deviceRiskLevel(openPorts: PortDef[]): string {
   return 'low'
 }
 
+function isPrivateIp(ip: string): boolean {
+  const [a, b] = ip.split('.').map(Number)
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+}
+
 function getArpHosts(): Map<string, string | null> {
   const ips = new Map<string, string | null>()
   try {
@@ -78,26 +83,26 @@ function getArpHosts(): Map<string, string | null> {
       out = execSync('arp -a', { encoding: 'utf8', timeout: 5000 })
       for (const line of out.split('\n')) {
         const m = line.match(/\s+([\d.]+)\s+([\da-f]{2}[-][\da-f]{2}[-][\da-f]{2}[-][\da-f]{2}[-][\da-f]{2}[-][\da-f]{2})\s+/i)
-        if (m) ips.set(m[1], m[2].replace(/-/g, ':').toLowerCase())
+        if (m && isPrivateIp(m[1])) ips.set(m[1], m[2].replace(/-/g, ':').toLowerCase())
       }
     } else if (process.platform === 'darwin') {
       out = execSync('arp -a 2>/dev/null', { encoding: 'utf8', timeout: 5000 })
       for (const line of out.split('\n')) {
         const m = line.match(/\(([^)]+)\)\s+at\s+([\da-f:]{17})/i)
-        if (m && m[2] !== 'ff:ff:ff:ff:ff:ff') ips.set(m[1], m[2].toLowerCase())
+        if (m && m[2] !== 'ff:ff:ff:ff:ff:ff' && isPrivateIp(m[1])) ips.set(m[1], m[2].toLowerCase())
       }
     } else {
       try {
         out = execSync('ip neigh show 2>/dev/null', { encoding: 'utf8', timeout: 5000 })
         for (const line of out.split('\n')) {
           const m = line.match(/^([\d.]+)\s+\S+\s+\S+\s+([\da-f:]{17})/i)
-          if (m) ips.set(m[1], m[2].toLowerCase())
+          if (m && isPrivateIp(m[1])) ips.set(m[1], m[2].toLowerCase())
         }
       } catch {
         out = execSync('arp -n 2>/dev/null || true', { encoding: 'utf8', timeout: 5000 })
         for (const line of out.split('\n').slice(1)) {
           const p = line.trim().split(/\s+/)
-          if (p.length >= 3 && p[2] && p[2].includes(':') && p[2] !== '(incomplete)') {
+          if (p.length >= 3 && p[2] && p[2].includes(':') && p[2] !== '(incomplete)' && isPrivateIp(p[0])) {
             ips.set(p[0], p[2].toLowerCase())
           }
         }
@@ -107,9 +112,30 @@ function getArpHosts(): Map<string, string | null> {
   return ips
 }
 
-function getLocalSubnet(preferSubnet?: string): { subnet: string; localIp: string } | null {
+function ipToInt(ip: string): number {
+  const [a, b, c, d] = ip.split('.').map(Number)
+  return ((a << 24) | (b << 16) | (c << 8) | d) >>> 0
+}
+
+function intToIp(n: number): string {
+  return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.')
+}
+
+interface SubnetInfo {
+  subnet: string      // "a.b.c" — primeiros 3 octetos, mantido p/ compat. com a UI (assume /24 quando exibido)
+  localIp: string
+  network: number      // endereço de rede como inteiro
+  broadcast: number     // endereço de broadcast como inteiro
+  prefixLen: number
+}
+
+function netmaskToPrefixLen(netmask: string): number {
+  return netmask.split('.').map(Number).reduce((acc, octet) => acc + octet.toString(2).split('1').length - 1, 0)
+}
+
+function getLocalSubnet(preferSubnet?: string): SubnetInfo | null {
   const ifaces = os.networkInterfaces()
-  const candidates: { subnet: string; localIp: string }[] = []
+  const candidates: SubnetInfo[] = []
 
   for (const addrs of Object.values(ifaces)) {
     for (const iface of (addrs ?? [])) {
@@ -117,7 +143,18 @@ function getLocalSubnet(preferSubnet?: string): { subnet: string; localIp: strin
       const parts = iface.address.split('.').map(Number)
       const [a, b] = parts
       if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) {
-        candidates.push({ subnet: `${parts[0]}.${parts[1]}.${parts[2]}`, localIp: iface.address })
+        const prefixLen = netmaskToPrefixLen(iface.netmask)
+        const ipInt = ipToInt(iface.address)
+        const maskInt = prefixLen === 0 ? 0 : (0xffffffff << (32 - prefixLen)) >>> 0
+        const network = (ipInt & maskInt) >>> 0
+        const broadcast = (network | (~maskInt >>> 0)) >>> 0
+        candidates.push({
+          subnet: `${parts[0]}.${parts[1]}.${parts[2]}`,
+          localIp: iface.address,
+          network,
+          broadcast,
+          prefixLen,
+        })
       }
     }
   }
@@ -131,22 +168,30 @@ function getLocalSubnet(preferSubnet?: string): { subnet: string; localIp: strin
 }
 
 async function isHostOnline(ip: string): Promise<boolean> {
-  const PROBE_PORTS = [80, 443, 22, 8080, 8443, 21, 23, 3389, 53, 139, 445, 3306, 5900]
-  for (const port of PROBE_PORTS) {
-    if (await tcpProbe(ip, port, 500)) return true
-  }
-  return false
+  const PROBE_PORTS = [80, 443, 22, 8080, 8443, 21, 23, 3389, 53, 139, 445, 3306, 5900, 8888, 7547, 8181, 8000]
+  // testa todas as portas em paralelo — sequencial custava até 17 * 500ms = 8.5s por IP ausente
+  const results = await Promise.all(PROBE_PORTS.map(port => tcpProbe(ip, port, 500)))
+  return results.some(Boolean)
 }
 
 async function discoverSubnet(
-  subnet: string,
+  info: SubnetInfo,
   arpHosts: Map<string, string | null>,
-  onFound: (ip: string) => void
+  onFound: (ip: string) => void,
+  onProbing?: (ip: string, index: number, total: number) => void,
 ): Promise<void> {
+  // hosts utilizáveis: entre rede+1 e broadcast-1 (cobre /24, /25, /26... corretamente)
+  const firstHost = info.network + 1
+  const lastHost = info.broadcast - 1
   const allIps: string[] = []
-  for (let i = 1; i <= 254; i++) allIps.push(`${subnet}.${i}`)
+  for (let n = firstHost; n <= lastHost; n++) allIps.push(intToIp(n))
 
+  const gateway = intToIp(firstHost)
+  if (!arpHosts.has(gateway)) arpHosts.set(gateway, null)
+
+  let probed = 0
   await parallelBatch(allIps, async (ip) => {
+    onProbing?.(ip, ++probed, allIps.length)
     if (await isHostOnline(ip)) onFound(ip)
   }, 30)
 }
@@ -169,7 +214,7 @@ export async function GET(req: NextRequest) {
     async start(controller) {
       const send = (obj: unknown) => {
         try {
-          controller.enqueue(encoder.encode(JSON.stringify(obj) + '\n'))
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`))
         } catch (_) {}
       }
 
@@ -178,18 +223,27 @@ export async function GET(req: NextRequest) {
 
       const arpHosts = getArpHosts()
       const subnetInfo = getLocalSubnet(preferSubnet)
-      const subnetPrefix = subnetInfo?.subnet
 
       // Discover all online hosts via TCP probe on the selected subnet only
       const onlineHosts = new Map<string, string | null>()
       if (subnetInfo) {
-        send({ type: 'progress', message: `Varrendo ${subnetInfo.subnet}.0/24 (apenas online)...` })
-        await discoverSubnet(subnetInfo.subnet, new Map(), (ip) => {
-          // Only accept IPs that belong to this /24 subnet (not broadcast)
-          const last = parseInt(ip.split('.')[3])
-          if (last === 0 || last === 255) return
-          onlineHosts.set(ip, arpHosts.get(ip) ?? null)
+        const totalHosts = subnetInfo.broadcast - subnetInfo.network - 1
+        send({
+          type: 'progress',
+          message: `Iniciando varredura ${intToIp(subnetInfo.network)}/${subnetInfo.prefixLen}...`,
+          subnet: subnetInfo.subnet,
+          total: totalHosts,
         })
+        await discoverSubnet(
+          subnetInfo,
+          new Map(),
+          (ip) => {
+            onlineHosts.set(ip, arpHosts.get(ip) ?? null)
+          },
+          (ip, index, total) => {
+            send({ type: 'scanning', ip, index, total })
+          },
+        )
       }
 
       const hosts = Array.from(onlineHosts.entries())
@@ -210,9 +264,10 @@ export async function GET(req: NextRequest) {
 
   return new Response(stream, {
     headers: {
-      'Content-Type': 'application/x-ndjson',
-      'Cache-Control': 'no-cache, no-store',
-      'X-Content-Type-Options': 'nosniff',
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
     }
   })
 }

@@ -1,9 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { exec } from 'child_process'
-import { promisify } from 'util'
+import { NextRequest } from 'next/server'
+import { spawn } from 'child_process'
 
 export const runtime = 'nodejs'
-const execAsync = promisify(exec)
+
+const isWin = process.platform === 'win32'
 
 interface Hop {
   hop: number
@@ -13,62 +13,118 @@ interface Hop {
   timeout: boolean
 }
 
-function parseTraceroute(output: string): Hop[] {
-  const lines = output.split('\n').slice(1)
-  const hops: Hop[] = []
+function parseWindowsLine(line: string): Hop | null {
+  const m = line.match(/^\s*(\d+)\s+/)
+  if (!m) return null
+  const hop = parseInt(m[1])
+  const rest = line.slice(m[0].length)
 
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-
-    const hopMatch = trimmed.match(/^\s*(\d+)/)
-    if (!hopMatch) continue
-    const hop = parseInt(hopMatch[1])
-
-    if (trimmed.includes('* * *')) {
-      hops.push({ hop, host: '*', ip: '*', latency: null, timeout: true })
-      continue
-    }
-
-    const timeMatch = trimmed.match(/(\d+\.?\d*)\s*ms/)
-    const hostMatch = trimmed.match(/\s+(\S+)\s+\(([^)]+)\)/)
-    const ipOnlyMatch = trimmed.match(/\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/)
-
-    const latency = timeMatch ? parseFloat(timeMatch[1]) : null
-    const host = hostMatch ? hostMatch[1] : ipOnlyMatch ? ipOnlyMatch[1] : '*'
-    const ip = hostMatch ? hostMatch[2] : ipOnlyMatch ? ipOnlyMatch[1] : '*'
-
-    hops.push({ hop, host, ip, latency, timeout: false })
+  // timeout
+  if (!rest.match(/\d{1,3}\.\d{1,3}\.\d{1,3}/)) {
+    return { hop, host: '*', ip: '*', latency: null, timeout: true }
   }
 
-  return hops
+  const times = Array.from(rest.matchAll(/<?\s*(\d+)\s*ms/gi)).map(t => parseInt(t[1]))
+  const latency = times.length ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : null
+  const ipMatch = rest.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/)
+  const ip = ipMatch ? ipMatch[1] : rest.trim().split(/\s+/).pop() ?? '*'
+
+  return { hop, host: ip, ip, latency, timeout: false }
 }
 
-export async function GET(request: NextRequest) {
-  const target = request.nextUrl.searchParams.get('target') || '8.8.8.8'
+function parseUnixLine(line: string): Hop | null {
+  const m = line.trim().match(/^(\d+)/)
+  if (!m) return null
+  const hop = parseInt(m[1])
 
-  // Validate target (only allow hostnames/IPs)
+  if (/^\d+\s+\*\s+\*\s+\*/.test(line.trim())) {
+    return { hop, host: '*', ip: '*', latency: null, timeout: true }
+  }
+
+  const timeMatch = line.match(/(\d+\.?\d*)\s*ms/)
+  const hostMatch = line.match(/\s+(\S+)\s+\(([^)]+)\)/)
+  const ipOnly    = line.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/)
+
+  return {
+    hop,
+    host:    hostMatch ? hostMatch[1] : ipOnly ? ipOnly[1] : '*',
+    ip:      hostMatch ? hostMatch[2] : ipOnly ? ipOnly[1] : '*',
+    latency: timeMatch ? Math.round(parseFloat(timeMatch[1])) : null,
+    timeout: false,
+  }
+}
+
+export async function GET(req: NextRequest) {
+  const target = req.nextUrl.searchParams.get('target') ?? '8.8.8.8'
   if (!/^[a-zA-Z0-9.\-]+$/.test(target)) {
-    return NextResponse.json({ error: 'Invalid target' }, { status: 400 })
+    return new Response('invalid target', { status: 400 })
   }
 
-  try {
-    const cmd = process.platform === 'darwin'
-      ? `traceroute -n -m 20 -w 2 ${target}`
-      : `traceroute -n -m 20 -w 2 -I ${target} 2>/dev/null || traceroute -n -m 20 -w 2 ${target}`
+  const enc = new TextEncoder()
+  const send = (obj: object) => enc.encode(`data: ${JSON.stringify(obj)}\n\n`)
 
-    const { stdout, stderr } = await execAsync(cmd, { timeout: 30000 })
-    const hops = parseTraceroute(stdout || stderr)
-    return NextResponse.json({ target, hops })
-  } catch (err) {
-    // Fallback: simulate traceroute using HTTP timing to known nodes
-    const knownHops = [
-      { hop: 1, host: 'gateway', ip: '192.168.1.1', latency: 1 + Math.random() * 3, timeout: false },
-      { hop: 2, host: 'isp-node-1', ip: '10.0.0.1', latency: 5 + Math.random() * 10, timeout: false },
-      { hop: 3, host: 'isp-core', ip: '72.14.208.1', latency: 15 + Math.random() * 10, timeout: false },
-      { hop: 4, host: '*', ip: '*', latency: null, timeout: true },
-      { hop: 5, host: target, ip: target, latency: 20 + Math.random() * 30, timeout: false },
-    ]
-    return NextResponse.json({ target, hops: knownHops, simulated: true })
-  }
+  const stream = new ReadableStream({
+    start(ctrl) {
+      const args = isWin
+        ? ['tracert', '-d', '-h', '30', '-w', '2000', target]
+        : process.platform === 'darwin'
+          ? ['traceroute', '-n', '-m', '30', '-w', '2', target]
+          : ['traceroute', '-n', '-m', '30', '-w', '2', '-I', target]
+
+      const child = spawn(args[0], args.slice(1), { windowsHide: true })
+
+      let buf = ''
+
+      child.stdout.on('data', (chunk: Buffer) => {
+        buf += chunk.toString('latin1')
+        const lines = buf.split('\n')
+        buf = lines.pop() ?? ''
+
+        for (const line of lines) {
+          const hop = isWin ? parseWindowsLine(line) : parseUnixLine(line)
+          if (hop) ctrl.enqueue(send(hop))
+        }
+      })
+
+      child.stderr.on('data', (chunk: Buffer) => {
+        buf += chunk.toString('latin1')
+        const lines = buf.split('\n')
+        buf = lines.pop() ?? ''
+        for (const line of lines) {
+          const hop = isWin ? parseWindowsLine(line) : parseUnixLine(line)
+          if (hop) ctrl.enqueue(send(hop))
+        }
+      })
+
+      child.on('close', () => {
+        // flush remaining
+        if (buf.trim()) {
+          const hop = isWin ? parseWindowsLine(buf) : parseUnixLine(buf)
+          if (hop) ctrl.enqueue(send(hop))
+        }
+        ctrl.enqueue(send({ done: true }))
+        ctrl.close()
+      })
+
+      child.on('error', (e) => {
+        ctrl.enqueue(send({ error: e.message }))
+        ctrl.close()
+      })
+
+      // abort if client disconnects
+      req.signal.addEventListener('abort', () => {
+        try { child.kill() } catch { /* ignore */ }
+        ctrl.close()
+      })
+    },
+  })
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type':  'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection':    'keep-alive',
+      'X-Accel-Buffering': 'no',
+    },
+  })
 }

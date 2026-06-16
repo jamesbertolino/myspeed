@@ -6,6 +6,7 @@ import {
   CheckCircle, Clock, Globe, ChevronRight, Loader2,
   Radar, Shield, ShieldAlert, ShieldCheck, ShieldOff,
   Terminal, Database, Lock, Server, Zap, Save, FileDown,
+  Copy, Check, FileSearch, Calendar, ExternalLink, ChevronDown, ChevronUp,
 } from 'lucide-react'
 import LatencyChart from '@/components/LatencyChart'
 import { latencyColor, calcJitter, jitterColor, jitterLabel, latencyLabel } from '@/lib/utils'
@@ -50,7 +51,35 @@ interface DnsResult {
   error?: string
 }
 
+interface WhoisResult {
+  domain: string
+  elapsed: number
+  server: string
+  domainName: string
+  registrar: string
+  registrarUrl: string
+  createdDate: string
+  updatedDate: string
+  expiresDate: string
+  status: string[]
+  nameServers: string[]
+  dnssec: string
+  country: string
+  organization: string
+  abuse: string
+  raw: string
+  error?: string
+}
 
+interface BenchResult {
+  name: string
+  ip: string
+  flag: string
+  avg: number
+  samples: number[]
+  timeout: boolean
+  isp: boolean
+}
 
 const VULN_DB: Record<string, VulnInfo> = {
   'FTP': {
@@ -271,7 +300,7 @@ function analyzeResults(result: ScanResult) {
 }
 
 export default function NetworkPage() {
-  const [tab, setTab] = useState<'ping' | 'traceroute' | 'dns' | 'scanner' | 'security'>('ping')
+  const [tab, setTab] = useState<'ping' | 'traceroute' | 'dns' | 'scanner' | 'security' | 'benchmark' | 'whois'>('ping')
 
   // Local agent detection
   const AGENT_URL = 'http://localhost:3777'
@@ -296,12 +325,32 @@ export default function NetworkPage() {
   const [traceHops, setTraceHops] = useState<TraceHop[]>([])
   const [traceLoading, setTraceLoading] = useState(false)
   const [traceSimulated, setTraceSimulated] = useState(false)
+  const [traceDone, setTraceDone] = useState(false)
+  const [traceError, setTraceError] = useState('')
+  const [traceLive, setTraceLive] = useState(false)
+  const traceLiveRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map())
+  const traceAbortRef = useRef<AbortController | null>(null)
+
+  // DNS Benchmark state
+  const [benchResults, setBenchResults] = useState<BenchResult[]>([])
+  const [benchLoading, setBenchLoading] = useState(false)
+  const [benchCustomIp, setBenchCustomIp] = useState('')
+  const [benchDone, setBenchDone] = useState(false)
+  const [benchIspFound, setBenchIspFound] = useState(false)
+  const [copied, setCopied] = useState('')
 
   // DNS state
   const [dnsDomain, setDnsDomain] = useState('google.com')
   const [dnsType, setDnsType] = useState('A')
   const [dnsResult, setDnsResult] = useState<DnsResult | null>(null)
   const [dnsLoading, setDnsLoading] = useState(false)
+
+  // WHOIS state
+  const [whoisDomain, setWhoisDomain] = useState('google.com')
+  const [whoisResult, setWhoisResult] = useState<WhoisResult | null>(null)
+  const [whoisLoading, setWhoisLoading] = useState(false)
+  const [whoisError, setWhoisError] = useState('')
+  const [whoisRawOpen, setWhoisRawOpen] = useState(false)
 
   // Scanner state
   const [scanTarget, setScanTarget] = useState('')
@@ -461,19 +510,150 @@ export default function NetworkPage() {
     }
   }, [scanResult])
 
+  const stopTrace = () => {
+    traceAbortRef.current?.abort()
+    traceLiveRef.current.forEach(t => clearInterval(t))
+    traceLiveRef.current.clear()
+    setTraceLoading(false)
+  }
+
+  const startLivePing = (ip: string) => {
+    if (ip === '*' || traceLiveRef.current.has(ip)) return
+    const tick = async () => {
+      try {
+        const r = await fetch(`/api/ping?target=${ip}`)
+        const d = await r.json()
+        if (d.ms >= 0) {
+          setTraceHops(prev => prev.map(h => h.ip === ip ? { ...h, latency: d.ms, timeout: false } : h))
+        } else {
+          setTraceHops(prev => prev.map(h => h.ip === ip ? { ...h, timeout: true } : h))
+        }
+      } catch { /* ignore */ }
+    }
+    tick()
+    traceLiveRef.current.set(ip, setInterval(tick, 1500))
+  }
+
   const runTraceroute = async () => {
-    setTraceLoading(true)
+    stopTrace()
     setTraceHops([])
+    setTraceError('')
+    setTraceDone(false)
+    setTraceSimulated(false)
+    setTraceLive(false)
+    setTraceLoading(true)
+
+    // Agent connected: single plain-JSON traceroute from the user's own device
+    if (agentStatus === 'connected') {
+      try {
+        const url = apiUrl('/api/traceroute', '/traceroute', { target: traceTarget })
+        const res = await fetch(url)
+        const data = await res.json()
+        setTraceHops(data.hops || [])
+        setTraceSimulated(data.simulated || false)
+        setTraceDone(true)
+      } catch {
+        setTraceHops([])
+        setTraceError('Falha ao executar traceroute via agente local')
+      } finally {
+        setTraceLoading(false)
+      }
+      return
+    }
+
+    // No agent: stream hops from the cloud server with live per-hop re-ping
+    setTraceLive(true)
+    const ctrl = new AbortController()
+    traceAbortRef.current = ctrl
+
     try {
-      const url = apiUrl('/api/traceroute', '/traceroute', { target: traceTarget })
-      const res = await fetch(url)
-      const data = await res.json()
-      setTraceHops(data.hops || [])
-      setTraceSimulated(data.simulated || false)
-    } catch {
-      setTraceHops([])
+      const res = await fetch(`/api/traceroute?target=${encodeURIComponent(traceTarget)}`, { signal: ctrl.signal })
+      if (!res.body) throw new Error('Sem resposta do servidor')
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const parts = buf.split('\n\n')
+        buf = parts.pop() ?? ''
+        for (const part of parts) {
+          const line = part.replace(/^data: /, '').trim()
+          if (!line) continue
+          try {
+            const obj = JSON.parse(line)
+            if (obj.done) { setTraceDone(true); setTraceLoading(false) }
+            else if (obj.error) { setTraceError(obj.error); setTraceLoading(false) }
+            else {
+              setTraceHops(prev => {
+                const exists = prev.find(h => h.hop === obj.hop)
+                return exists ? prev.map(h => h.hop === obj.hop ? obj : h) : [...prev, obj]
+              })
+              startLivePing(obj.ip)
+            }
+          } catch { /* ignore parse errors */ }
+        }
+      }
+    } catch (e: unknown) {
+      if (e instanceof Error && e.name !== 'AbortError') setTraceError(e.message)
     } finally {
       setTraceLoading(false)
+    }
+  }
+
+  useEffect(() => () => stopTrace(), [])
+
+  const runBenchmark = async () => {
+    setBenchLoading(true)
+    setBenchDone(false)
+    setBenchResults([])
+    try {
+      const customTrim = benchCustomIp.trim()
+      const [mainRes, customRes] = await Promise.all([
+        fetch('/api/dns-benchmark').then(r => r.json()),
+        customTrim
+          ? fetch(`/api/dns-benchmark?ip=${encodeURIComponent(customTrim)}`).then(r => r.json())
+          : Promise.resolve(null),
+      ])
+
+      const rows: BenchResult[] = mainRes.results ?? []
+      setBenchIspFound(mainRes.ispFound ?? false)
+      if (customRes?.avg != null) {
+        rows.push({ name: `Personalizado (${customTrim})`, ip: customTrim, flag: '⚙️', avg: customRes.avg, samples: customRes.samples, timeout: customRes.timeout, isp: false })
+        rows.sort((a, b) => (a.timeout ? 1 : 0) - (b.timeout ? 1 : 0) || a.avg - b.avg)
+      }
+
+      setBenchResults(rows)
+      setBenchDone(true)
+    } finally {
+      setBenchLoading(false)
+    }
+  }
+
+  const copyIp = (ip: string) => {
+    navigator.clipboard.writeText(ip).then(() => {
+      setCopied(ip)
+      setTimeout(() => setCopied(''), 2000)
+    })
+  }
+
+  const runWhois = async () => {
+    setWhoisLoading(true)
+    setWhoisError('')
+    setWhoisResult(null)
+    setWhoisRawOpen(false)
+    try {
+      const res = await fetch(`/api/whois?domain=${encodeURIComponent(whoisDomain.trim())}`)
+      const data: WhoisResult = await res.json()
+      if (data.error) setWhoisError(data.error)
+      else setWhoisResult(data)
+    } catch {
+      setWhoisError('Falha ao consultar WHOIS')
+    } finally {
+      setWhoisLoading(false)
     }
   }
 
@@ -561,7 +741,7 @@ export default function NetworkPage() {
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
       <div className="mb-4">
         <h1 className="text-xl md:text-2xl font-bold text-white">Análise de Rede</h1>
-        <p className="text-sm text-gray-500 mt-1">Ping, Jitter, Traceroute, DNS e Scanner de Portas</p>
+        <p className="text-sm text-gray-500 mt-1">Ping, Jitter, Traceroute, DNS, Benchmark, WHOIS e Scanner de Portas</p>
       </div>
 
       {/* Agent status banner */}
@@ -593,6 +773,8 @@ export default function NetworkPage() {
           { id: 'ping',       icon: Activity,    label: 'Ping' },
           { id: 'traceroute', icon: Network,      label: 'Traceroute' },
           { id: 'dns',        icon: Globe,        label: 'DNS' },
+          { id: 'benchmark',  icon: Zap,          label: 'DNS Benchmark' },
+          { id: 'whois',      icon: FileSearch,   label: 'WHOIS' },
           { id: 'scanner',    icon: Radar,        label: 'Scanner' },
           { id: 'security',   icon: Shield,       label: 'Segurança' },
         ] as const).map(t => (
@@ -826,7 +1008,7 @@ export default function NetworkPage() {
             <div className="flex items-start gap-3 bg-yellow-500/5 border border-yellow-500/20 rounded-xl px-4 py-3 text-xs text-yellow-400">
               <Server className="w-4 h-4 shrink-0 mt-0.5" />
               <div>
-                <p className="font-semibold mb-0.5">Executado a partir do servidor cloud</p>
+                <p className="font-semibold mb-0.5">Executado a partir do servidor cloud — com ping ao vivo por salto</p>
                 <p className="text-yellow-400/70">Não reflete a sua rota de rede. Rode <code className="text-yellow-300">node scripts/local-agent.js</code> para obter o traceroute real do seu dispositivo.</p>
               </div>
             </div>
@@ -839,73 +1021,119 @@ export default function NetworkPage() {
                 value={traceTarget}
                 onChange={e => setTraceTarget(e.target.value)}
                 placeholder="IP ou domínio (ex: 8.8.8.8)"
-                onKeyDown={e => e.key === 'Enter' && runTraceroute()}
+                onKeyDown={e => e.key === 'Enter' && !traceLoading && runTraceroute()}
               />
             </div>
-            <button
-              onClick={runTraceroute}
-              disabled={traceLoading}
-              className="btn-cyan px-5 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 disabled:opacity-50"
-            >
-              {traceLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-              {traceLoading ? 'Rastreando...' : 'Rastrear'}
-            </button>
+            {traceLoading && agentStatus !== 'connected' ? (
+              <button onClick={stopTrace} className="btn-purple px-5 py-2 rounded-lg font-semibold text-sm flex items-center gap-2">
+                <Square className="w-4 h-4" />Parar
+              </button>
+            ) : (
+              <button
+                onClick={runTraceroute}
+                disabled={traceLoading}
+                className="btn-cyan px-5 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 disabled:opacity-50"
+              >
+                {traceLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                {traceLoading ? 'Rastreando...' : 'Rastrear'}
+              </button>
+            )}
           </div>
 
           {traceSimulated && (
             <div className="flex items-center gap-2 text-xs text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 rounded-lg px-4 py-2">
               <AlertTriangle className="w-4 h-4 shrink-0" />
-              Traceroute simulado — o servidor não tem permissão para executar traceroute real.
+              Traceroute simulado — o agente local não tem permissão para executar traceroute real.
             </div>
           )}
 
-          <div className="card overflow-x-auto">
+          {traceError && (
+            <div className="flex items-center gap-2 text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />{traceError}
+            </div>
+          )}
+
+          <div className="card overflow-hidden">
             {traceHops.length === 0 && !traceLoading ? (
               <div className="p-8 text-center text-gray-600 text-sm">
                 <Network className="w-8 h-8 mx-auto mb-2 opacity-30" />
                 Execute o traceroute para ver os saltos
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <div className="min-w-[480px]">
-                  <div className="px-4 py-3 border-b border-[#1a2744] grid grid-cols-12 text-xs text-gray-500 uppercase tracking-wider font-semibold">
-                    <span className="col-span-1">#</span>
-                    <span className="col-span-4">Host</span>
-                    <span className="col-span-3">IP</span>
-                    <span className="col-span-2 text-right">Latência</span>
-                    <span className="col-span-2 text-right">Status</span>
-                  </div>
-                  {traceHops.map((hop, i) => (
-                    <div key={i} className="px-4 py-3 border-b border-[#1a2744]/50 grid grid-cols-12 text-sm items-center hover:bg-white/2">
-                      <span className="col-span-1 text-gray-600 mono">{hop.hop}</span>
-                      <span className="col-span-4 text-gray-300 truncate font-medium">{hop.host}</span>
-                      <span className="col-span-3 text-gray-500 mono text-xs">{hop.ip !== hop.host ? hop.ip : ''}</span>
-                      <span className="col-span-2 text-right mono" style={{ color: hop.latency ? latencyColor(hop.latency) : '#4a5568' }}>
-                        {hop.latency ? `${hop.latency.toFixed(1)}ms` : '—'}
-                      </span>
-                      <div className="col-span-2 flex justify-end">
+              <>
+                <div className="px-4 py-3 border-b border-[#1a2744] grid grid-cols-12 text-xs text-gray-500 uppercase tracking-wider font-semibold">
+                  <span className="col-span-1">#</span>
+                  <span className="col-span-4">Host / IP</span>
+                  <span className="col-span-3 text-right">Latência</span>
+                  <span className="col-span-4 text-right">Status</span>
+                </div>
+
+                {traceHops.map((hop) => {
+                  const color = hop.timeout ? '#4a5568' : hop.latency ? latencyColor(hop.latency) : '#4a5568'
+                  const isLive = traceLive && traceDone && !hop.timeout && hop.ip !== '*'
+                  return (
+                    <div key={hop.hop} className="px-4 py-2.5 border-b border-[#1a2744]/40 grid grid-cols-12 text-sm items-center hover:bg-white/[0.02] transition-colors">
+                      <span className="col-span-1 text-gray-600 mono text-xs">{hop.hop}</span>
+
+                      <div className="col-span-4 min-w-0 pr-2">
                         {hop.timeout ? (
-                          <span className="tag tag-red">Timeout</span>
+                          <span className="text-gray-600">* * *</span>
                         ) : (
-                          <span className="tag" style={{
-                            background: `${hop.latency ? latencyColor(hop.latency) : '#4a5568'}15`,
-                            color: hop.latency ? latencyColor(hop.latency) : '#4a5568',
-                            border: `1px solid ${hop.latency ? latencyColor(hop.latency) : '#4a5568'}30`,
+                          <>
+                            <p className="text-gray-200 mono text-xs truncate">{hop.ip}</p>
+                            {hop.host !== hop.ip && <p className="text-gray-600 text-[10px] truncate">{hop.host}</p>}
+                          </>
+                        )}
+                      </div>
+
+                      <div className="col-span-3 text-right">
+                        {hop.timeout ? (
+                          <span className="text-gray-700 mono text-xs">—</span>
+                        ) : (
+                          <span className="font-bold mono text-sm transition-all duration-300" style={{ color }}>
+                            {hop.latency != null ? `${hop.latency.toFixed(1)}ms` : '…'}
+                            {isLive && <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-current opacity-70 animate-pulse" />}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="col-span-4 flex justify-end">
+                        {hop.timeout ? (
+                          <span className="tag tag-red text-[10px]">Sem resposta</span>
+                        ) : hop.latency == null ? (
+                          <span className="flex items-center gap-1 text-xs text-gray-600">
+                            <Loader2 className="w-3 h-3 animate-spin" />medindo
+                          </span>
+                        ) : (
+                          <span className="tag text-[10px]" style={{
+                            background: `${color}15`, color, border: `1px solid ${color}30`
                           }}>
-                            {hop.latency ? latencyLabel(hop.latency) : 'OK'}
+                            {latencyLabel(hop.latency)}
                           </span>
                         )}
                       </div>
                     </div>
-                  ))}
-                  {traceLoading && (
-                    <div className="px-4 py-3 flex items-center gap-2 text-gray-500 text-sm">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Descobrindo próximo salto...
-                    </div>
-                  )}
-                </div>
-              </div>
+                  )
+                })}
+
+                {traceLoading && (
+                  <div className="px-4 py-3 flex items-center gap-2 text-gray-600 text-xs border-b border-[#1a2744]/40">
+                    <span className="flex gap-0.5">
+                      <span className="w-1 h-1 rounded-full bg-[#00d4ff] animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <span className="w-1 h-1 rounded-full bg-[#00d4ff] animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <span className="w-1 h-1 rounded-full bg-[#00d4ff] animate-bounce" style={{ animationDelay: '300ms' }} />
+                    </span>
+                    Descobrindo próximo salto…
+                  </div>
+                )}
+
+                {traceLive && traceDone && (
+                  <div className="px-4 py-2.5 text-xs text-gray-600 flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#00ff88] animate-pulse" />
+                    {traceHops.filter(h => !h.timeout).length} saltos ativos · ping ao vivo a cada 1.5s
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -1008,6 +1236,361 @@ export default function NetworkPage() {
                   )}
                 </div>
               )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* DNS BENCHMARK TAB */}
+      {tab === 'benchmark' && (
+        <div className="space-y-4">
+          <div className="card p-4 flex flex-wrap items-end gap-4">
+            <div className="flex-1 min-w-48">
+              <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">
+                IP personalizado — gateway/DNS local <span className="text-gray-600 normal-case">(opcional)</span>
+              </label>
+              <input
+                className="dark-input"
+                value={benchCustomIp}
+                onChange={e => setBenchCustomIp(e.target.value)}
+                placeholder="ex: 192.168.1.1"
+                onKeyDown={e => e.key === 'Enter' && !benchLoading && runBenchmark()}
+              />
+            </div>
+            <button
+              onClick={runBenchmark}
+              disabled={benchLoading}
+              className="btn-cyan px-5 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 disabled:opacity-50"
+            >
+              {benchLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+              {benchLoading ? 'Testando…' : 'Iniciar Benchmark'}
+            </button>
+          </div>
+
+          {benchLoading && benchResults.length === 0 && (
+            <div className="card p-8 flex flex-col items-center gap-3 text-gray-500">
+              <Loader2 className="w-8 h-8 animate-spin text-[#00d4ff]" />
+              <p className="text-sm">Medindo latência ICMP para cada servidor DNS — aguarde…</p>
+            </div>
+          )}
+
+          {benchDone && benchResults.length > 0 && (() => {
+            const best    = benchResults.find(r => !r.timeout)
+            const bestIsp = benchResults.find(r => !r.timeout && r.isp)
+            const maxAvg  = Math.max(...benchResults.filter(r => !r.timeout).map(r => r.avg), 1)
+            const ispResults    = benchResults.filter(r => r.isp)
+            const publicResults = benchResults.filter(r => !r.isp)
+
+            return (
+              <div className="card p-5">
+                {best && (
+                  <div className="flex items-center gap-3 p-3 rounded-xl mb-4 border border-[#00d4ff]/20 bg-[#00d4ff]/5">
+                    <span className="text-2xl">{best.flag}</span>
+                    <div className="flex-1">
+                      <p className="text-xs text-[#00d4ff] font-semibold uppercase tracking-wider mb-0.5">🏆 Mais rápido</p>
+                      <p className="text-white font-bold">{best.name} <span className="text-gray-400 font-normal text-sm">({best.ip})</span></p>
+                      <p className="text-xs text-gray-500 mt-0.5">Média {best.avg.toFixed(1)}ms · menor latência na sua rede</p>
+                    </div>
+                    <button
+                      onClick={() => copyIp(best.ip)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-[#00d4ff]/30 text-[#00d4ff] hover:bg-[#00d4ff]/10 transition-all"
+                    >
+                      {copied === best.ip ? <><Check className="w-3 h-3" />Copiado!</> : <><Copy className="w-3 h-3" />Copiar IP</>}
+                    </button>
+                  </div>
+                )}
+
+                {bestIsp && !bestIsp.timeout && (
+                  <div className="flex items-center gap-3 p-3 rounded-xl mb-5 border border-amber-500/20 bg-amber-500/5">
+                    <span className="text-2xl">{bestIsp.flag}</span>
+                    <div className="flex-1">
+                      <p className="text-xs text-amber-400 font-semibold uppercase tracking-wider mb-0.5">🏠 DNS do Provedor</p>
+                      <p className="text-white font-bold">{bestIsp.name} <span className="text-gray-400 font-normal text-sm">({bestIsp.ip})</span></p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        Média {bestIsp.avg.toFixed(1)}ms ·{' '}
+                        {best && !best.isp
+                          ? bestIsp.avg <= best.avg
+                            ? 'mais rápido que os DNS públicos'
+                            : `${(bestIsp.avg - best.avg).toFixed(1)}ms mais lento que ${best.name}`
+                          : 'detectado automaticamente'
+                        }
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => copyIp(bestIsp.ip)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-amber-500/30 text-amber-400 hover:bg-amber-500/10 transition-all"
+                    >
+                      {copied === bestIsp.ip ? <><Check className="w-3 h-3" />Copiado!</> : <><Copy className="w-3 h-3" />Copiar IP</>}
+                    </button>
+                  </div>
+                )}
+
+                {ispResults.length > 0 && (
+                  <>
+                    <p className="text-xs text-amber-400/70 font-semibold uppercase tracking-wider mb-2">DNS do Provedor (ISP)</p>
+                    <div className="space-y-2 mb-5">
+                      {ispResults.map(r => {
+                        const rank   = benchResults.indexOf(r)
+                        const barPct = r.timeout ? 100 : (r.avg / maxAvg) * 100
+                        const color  = r.timeout ? '#ff4d4d' : '#f59e0b'
+                        return (
+                          <div key={r.ip} className="group">
+                            <div className="flex items-center gap-3 mb-1">
+                              <span className="text-gray-600 text-xs w-4 text-right shrink-0">{rank + 1}</span>
+                              <span className="text-base shrink-0">{r.flag}</span>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm text-white font-medium truncate">{r.name}</span>
+                                  <span className="text-xs text-gray-600 mono shrink-0">{r.ip}</span>
+                                </div>
+                                <div className="relative h-1.5 bg-white/5 rounded-full mt-1.5 overflow-hidden">
+                                  <div className="absolute left-0 top-0 h-full rounded-full" style={{ width: `${barPct}%`, background: color }} />
+                                </div>
+                              </div>
+                              <div className="text-right shrink-0 w-20">
+                                {r.timeout ? <span className="text-xs text-red-400">Timeout</span>
+                                  : <span className="text-sm font-bold mono" style={{ color }}>{r.avg.toFixed(1)}<span className="text-gray-500 text-xs font-normal ml-0.5">ms</span></span>}
+                              </div>
+                              <button onClick={() => copyIp(r.ip)} className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-600 hover:text-amber-400" title="Copiar IP">
+                                {copied === r.ip ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </>
+                )}
+
+                <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-2">DNS Públicos</p>
+                <div className="space-y-2">
+                  {publicResults.map(r => {
+                    const rank   = benchResults.indexOf(r)
+                    const barPct = r.timeout ? 100 : (r.avg / maxAvg) * 100
+                    const color  = r.timeout ? '#ff4d4d' : rank === 0 ? '#00d4ff' : rank < 3 ? '#00ff88' : rank < 6 ? '#ffd700' : '#ff8800'
+                    return (
+                      <div key={r.ip} className="group">
+                        <div className="flex items-center gap-3 mb-1">
+                          <span className="text-gray-600 text-xs w-4 text-right shrink-0">{rank + 1}</span>
+                          <span className="text-base shrink-0">{r.flag}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-white font-medium truncate">{r.name}</span>
+                              <span className="text-xs text-gray-600 mono shrink-0">{r.ip}</span>
+                            </div>
+                            <div className="relative h-1.5 bg-white/5 rounded-full mt-1.5 overflow-hidden">
+                              <div className="absolute left-0 top-0 h-full rounded-full" style={{ width: `${barPct}%`, background: color }} />
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0 w-20">
+                            {r.timeout ? <span className="text-xs text-red-400">Timeout</span>
+                              : <span className="text-sm font-bold mono" style={{ color }}>{r.avg.toFixed(1)}<span className="text-gray-500 text-xs font-normal ml-0.5">ms</span></span>}
+                          </div>
+                          <button onClick={() => copyIp(r.ip)} className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-600 hover:text-[#00d4ff]" title="Copiar IP">
+                            {copied === r.ip ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {!benchIspFound && (
+                  <p className="text-xs text-amber-500/60 mt-3">⚠ DNS do provedor não detectado automaticamente — use o campo personalizado para adicioná-lo manualmente.</p>
+                )}
+
+                <p className="text-xs text-gray-600 mt-4 text-center">
+                  Medido via ICMP ping (OS) · 5 amostras por servidor · mesma precisão do CMD
+                </p>
+              </div>
+            )
+          })()}
+        </div>
+      )}
+
+      {/* WHOIS TAB */}
+      {tab === 'whois' && (
+        <div className="space-y-4">
+          <div className="card p-4 flex flex-wrap items-end gap-4">
+            <div className="flex-1 min-w-48">
+              <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">Domínio</label>
+              <input
+                className="dark-input"
+                value={whoisDomain}
+                onChange={e => setWhoisDomain(e.target.value)}
+                placeholder="ex: google.com"
+                onKeyDown={e => e.key === 'Enter' && !whoisLoading && runWhois()}
+              />
+            </div>
+            <button
+              onClick={runWhois}
+              disabled={whoisLoading}
+              className="btn-cyan px-5 py-2 rounded-lg font-semibold text-sm flex items-center gap-2 disabled:opacity-50"
+            >
+              {whoisLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSearch className="w-4 h-4" />}
+              {whoisLoading ? 'Consultando…' : 'Consultar WHOIS'}
+            </button>
+          </div>
+
+          {whoisError && (
+            <div className="flex items-center gap-2 text-red-400 text-sm bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              {whoisError}
+            </div>
+          )}
+
+          {whoisResult && (
+            <div className="space-y-4">
+              <div className="card p-5">
+                <div className="flex items-start justify-between gap-4 mb-5">
+                  <div>
+                    <h2 className="text-lg font-bold text-white">{whoisResult.domainName || whoisResult.domain}</h2>
+                    {whoisResult.organization && (
+                      <p className="text-sm text-gray-400 mt-0.5">{whoisResult.organization}</p>
+                    )}
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {whoisResult.status.slice(0, 4).map(s => {
+                        const ok = s.toLowerCase().includes('active') || s.toLowerCase().includes('ok')
+                        return (
+                          <span key={s} className={`tag text-[10px] ${ok ? 'tag-green' : 'tag-yellow'}`}>
+                            {s.split(' ')[0].replace('client', '').replace('server', '').trim() || s}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-xs text-gray-600">Consultado em</p>
+                    <p className="text-xs text-gray-500 mono">{whoisResult.elapsed}ms</p>
+                    <p className="text-xs text-gray-700 mt-1 mono">{whoisResult.server}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {whoisResult.registrar && (
+                    <div className="bg-white/3 rounded-xl p-3.5">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <Shield className="w-3.5 h-3.5 text-[#00d4ff]" />
+                        <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Registrar</span>
+                      </div>
+                      <p className="text-sm text-white font-medium">{whoisResult.registrar}</p>
+                      {whoisResult.registrarUrl && (
+                        <a
+                          href={whoisResult.registrarUrl.startsWith('http') ? whoisResult.registrarUrl : `https://${whoisResult.registrarUrl}`}
+                          target="_blank" rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-xs text-[#00d4ff]/70 hover:text-[#00d4ff] mt-1 transition-colors"
+                        >
+                          <ExternalLink className="w-3 h-3" />{whoisResult.registrarUrl}
+                        </a>
+                      )}
+                    </div>
+                  )}
+
+                  {whoisResult.createdDate && (
+                    <div className="bg-white/3 rounded-xl p-3.5">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <Calendar className="w-3.5 h-3.5 text-[#00ff88]" />
+                        <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Criado em</span>
+                      </div>
+                      <p className="text-sm text-white font-medium mono">
+                        {whoisResult.createdDate.split('T')[0]}
+                      </p>
+                    </div>
+                  )}
+
+                  {whoisResult.expiresDate && (() => {
+                    const exp = new Date(whoisResult.expiresDate)
+                    const daysLeft = Math.ceil((exp.getTime() - Date.now()) / 86400000)
+                    const expired = daysLeft < 0
+                    const soon = daysLeft >= 0 && daysLeft <= 30
+                    return (
+                      <div className={`bg-white/3 rounded-xl p-3.5 ${expired ? 'border border-red-500/30' : soon ? 'border border-amber-500/30' : ''}`}>
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <Calendar className={`w-3.5 h-3.5 ${expired ? 'text-red-400' : soon ? 'text-amber-400' : 'text-gray-400'}`} />
+                          <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Expira em</span>
+                        </div>
+                        <p className={`text-sm font-medium mono ${expired ? 'text-red-400' : soon ? 'text-amber-400' : 'text-white'}`}>
+                          {whoisResult.expiresDate.split('T')[0]}
+                        </p>
+                        <p className={`text-xs mt-0.5 ${expired ? 'text-red-400' : soon ? 'text-amber-400' : 'text-gray-500'}`}>
+                          {expired ? `Expirado há ${Math.abs(daysLeft)} dias` : `${daysLeft} dias restantes`}
+                        </p>
+                      </div>
+                    )
+                  })()}
+
+                  {whoisResult.updatedDate && (
+                    <div className="bg-white/3 rounded-xl p-3.5">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <Clock className="w-3.5 h-3.5 text-gray-500" />
+                        <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Atualizado</span>
+                      </div>
+                      <p className="text-sm text-white mono">{whoisResult.updatedDate.split('T')[0]}</p>
+                    </div>
+                  )}
+
+                  {whoisResult.country && (
+                    <div className="bg-white/3 rounded-xl p-3.5">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <Globe className="w-3.5 h-3.5 text-gray-500" />
+                        <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">País</span>
+                      </div>
+                      <p className="text-sm text-white">{whoisResult.country}</p>
+                    </div>
+                  )}
+
+                  {whoisResult.dnssec && (
+                    <div className="bg-white/3 rounded-xl p-3.5">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <Shield className="w-3.5 h-3.5 text-gray-500" />
+                        <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">DNSSEC</span>
+                      </div>
+                      <p className="text-sm text-white">{whoisResult.dnssec}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {whoisResult.nameServers.length > 0 && (
+                <div className="card p-5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Server className="w-4 h-4 text-[#00d4ff]" />
+                    <h3 className="text-sm font-semibold text-white">Name Servers</h3>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {whoisResult.nameServers.map(ns => (
+                      <div key={ns} className="flex items-center gap-2 bg-white/3 rounded-lg px-3 py-2">
+                        <ChevronRight className="w-3 h-3 text-[#00d4ff] shrink-0" />
+                        <span className="text-sm text-gray-300 mono truncate">{ns.toLowerCase()}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {whoisResult.raw && (
+                <div className="card overflow-hidden">
+                  <button
+                    onClick={() => setWhoisRawOpen(p => !p)}
+                    className="w-full flex items-center justify-between px-5 py-3.5 text-sm text-gray-400 hover:text-gray-200 transition-colors"
+                  >
+                    <span className="font-semibold">Resposta bruta (raw WHOIS)</span>
+                    {whoisRawOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
+                  {whoisRawOpen && (
+                    <pre className="px-5 pb-5 text-xs text-gray-500 mono whitespace-pre-wrap break-all leading-5 max-h-96 overflow-y-auto border-t border-white/5">
+                      {whoisResult.raw}
+                    </pre>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!whoisResult && !whoisLoading && !whoisError && (
+            <div className="card p-10 flex flex-col items-center gap-3 text-gray-600">
+              <FileSearch className="w-10 h-10 opacity-30" />
+              <p className="text-sm">Digite um domínio e clique em Consultar WHOIS</p>
             </div>
           )}
         </div>

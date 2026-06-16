@@ -1,18 +1,24 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Settings, Plus, Trash2, RotateCcw, Save, Check } from 'lucide-react'
+import { Settings, Plus, Trash2, RotateCcw, Save, Check, Bell, BellOff } from 'lucide-react'
 import { AppSettings, PingTarget, loadSettings, saveSettings, DEFAULT_SETTINGS } from '@/lib/settings'
+import { requestNotificationPermission, notificationPermission } from '@/lib/alerts'
 import clsx from 'clsx'
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [saved, setSaved] = useState(false)
+  const [notifPerm, setNotifPerm] = useState<string>('default')
   const [newLabel, setNewLabel] = useState('')
   const [newHost, setNewHost] = useState('')
   const [hostError, setHostError] = useState('')
+  const [webhookTest, setWebhookTest] = useState<'idle' | 'sending' | 'ok' | 'fail'>('idle')
 
-  useEffect(() => { setSettings(loadSettings()) }, [])
+  useEffect(() => {
+    setSettings(loadSettings())
+    setNotifPerm(notificationPermission())
+  }, [])
 
   function save() {
     saveSettings(settings)
@@ -229,6 +235,194 @@ export default function SettingsPage() {
                 {pct}%
               </button>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Teste Agendado */}
+      <section className="card p-5 mb-4">
+        <h2 className="text-sm font-semibold text-white mb-1">Teste de Velocidade Agendado</h2>
+        <p className="text-xs text-gray-500 mb-4">Executa automaticamente enquanto o browser estiver aberto</p>
+        <div className="flex gap-2 flex-wrap">
+          {[
+            { label: 'Desativado', value: 0 },
+            { label: '1h',  value: 1 },
+            { label: '3h',  value: 3 },
+            { label: '6h',  value: 6 },
+            { label: '12h', value: 12 },
+            { label: '24h', value: 24 },
+          ].map(({ label, value }) => (
+            <button key={value}
+              onClick={() => setSettings(s => ({ ...s, autoSpeedtest: value }))}
+              className={clsx('px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all',
+                settings.autoSpeedtest === value
+                  ? 'bg-cyan-500/10 border-cyan-500/30 text-[#00d4ff]'
+                  : 'border-[#1a2744] text-gray-400 hover:text-white hover:bg-white/5'
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {settings.autoSpeedtest > 0 && (
+          <p className="text-xs text-gray-600 mt-3">
+            Teste de ~10s a cada {settings.autoSpeedtest}h · resultado salvo no histórico com flag <span className="text-gray-500">auto</span>
+          </p>
+        )}
+      </section>
+
+      {/* Alertas */}
+      <section className="card p-5 mb-4">
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-sm font-semibold text-white">Alertas e Notificações</h2>
+          <button
+            onClick={() => setSettings(s => ({ ...s, alerts: { ...s.alerts, enabled: !s.alerts.enabled } }))}
+            className={clsx('flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold border transition-all',
+              settings.alerts.enabled
+                ? 'bg-cyan-500/10 border-cyan-500/30 text-[#00d4ff]'
+                : 'border-[#1a2744] text-gray-500'
+            )}
+          >
+            {settings.alerts.enabled ? <Bell className="w-3 h-3" /> : <BellOff className="w-3 h-3" />}
+            {settings.alerts.enabled ? 'Ativado' : 'Desativado'}
+          </button>
+        </div>
+        <p className="text-xs text-gray-500 mb-4">Notificações do browser quando a rede degradar</p>
+
+        {/* permissão de notificação */}
+        {notifPerm !== 'granted' && (
+          <div className={clsx('flex items-center justify-between px-3 py-2.5 rounded-lg mb-4 text-xs',
+            notifPerm === 'denied' ? 'bg-red-500/10 border border-red-500/20' : 'bg-yellow-500/10 border border-yellow-500/20'
+          )}>
+            <span className={notifPerm === 'denied' ? 'text-red-400' : 'text-yellow-400'}>
+              {notifPerm === 'denied'
+                ? 'Notificações bloqueadas no browser — habilite nas configurações do site'
+                : 'Permissão de notificação necessária para os alertas funcionarem'}
+            </span>
+            {notifPerm !== 'denied' && (
+              <button
+                onClick={async () => {
+                  const ok = await requestNotificationPermission()
+                  setNotifPerm(ok ? 'granted' : 'denied')
+                }}
+                className="btn-cyan px-3 py-1 rounded-lg text-xs ml-3 shrink-0"
+              >
+                Permitir
+              </button>
+            )}
+          </div>
+        )}
+        {notifPerm === 'granted' && (
+          <div className="flex items-center gap-2 text-xs text-green-400 mb-4">
+            <Check className="w-3 h-3" /> Notificações autorizadas
+          </div>
+        )}
+
+        <div className="space-y-4">
+          {/* ping */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <label className="text-xs text-gray-400 block mb-1">Latência máxima (ms)</label>
+              <p className="text-xs text-gray-600">Alerta se ping ultrapassar este valor · 0 = desativado</p>
+            </div>
+            <input type="number" min={0} max={2000}
+              className="input-field w-24 text-right mono"
+              value={settings.alerts.pingMs}
+              onChange={e => setSettings(s => ({ ...s, alerts: { ...s.alerts, pingMs: Number(e.target.value) } }))}
+            />
+          </div>
+
+          {/* packet loss */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <label className="text-xs text-gray-400 block mb-1">Perda de pacotes máxima (%)</label>
+              <p className="text-xs text-gray-600">Alerta se packet loss ultrapassar · 0 = desativado</p>
+            </div>
+            <input type="number" min={0} max={100}
+              className="input-field w-24 text-right mono"
+              value={settings.alerts.packetLossPct}
+              onChange={e => setSettings(s => ({ ...s, alerts: { ...s.alerts, packetLossPct: Number(e.target.value) } }))}
+            />
+          </div>
+
+          {/* download */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <label className="text-xs text-gray-400 block mb-1">Download mínimo (Mbps)</label>
+              <p className="text-xs text-gray-600">Alerta se velocidade cair abaixo · 0 = desativado</p>
+            </div>
+            <input type="number" min={0}
+              className="input-field w-24 text-right mono"
+              value={settings.alerts.downloadMbps}
+              onChange={e => setSettings(s => ({ ...s, alerts: { ...s.alerts, downloadMbps: Number(e.target.value) } }))}
+            />
+          </div>
+
+          {/* upload */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <label className="text-xs text-gray-400 block mb-1">Upload mínimo (Mbps)</label>
+              <p className="text-xs text-gray-600">Alerta se velocidade cair abaixo · 0 = desativado</p>
+            </div>
+            <input type="number" min={0}
+              className="input-field w-24 text-right mono"
+              value={settings.alerts.uploadMbps}
+              onChange={e => setSettings(s => ({ ...s, alerts: { ...s.alerts, uploadMbps: Number(e.target.value) } }))}
+            />
+          </div>
+
+          {/* webhook */}
+          <div className="pt-3 border-t border-[#1a2744]">
+            <label className="text-xs text-gray-400 block mb-1">Webhook (Discord, Slack ou genérico)</label>
+            <p className="text-xs text-gray-600 mb-2">Recebe os alertas mesmo com o app fechado ou sem permissão de notificação do browser · vazio = desativado</p>
+            <div className="flex gap-2">
+              <input type="url" placeholder="https://discord.com/api/webhooks/..."
+                className="input-field flex-1 text-xs"
+                value={settings.alerts.webhookUrl}
+                onChange={e => { setWebhookTest('idle'); setSettings(s => ({ ...s, alerts: { ...s.alerts, webhookUrl: e.target.value } })) }}
+              />
+              <button
+                disabled={!settings.alerts.webhookUrl || webhookTest === 'sending'}
+                onClick={async () => {
+                  setWebhookTest('sending')
+                  try {
+                    const res = await fetch('/api/alerts/webhook', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ webhookUrl: settings.alerts.webhookUrl, message: 'Teste de webhook do MySpeed 🚀' }),
+                    })
+                    const data = await res.json()
+                    setWebhookTest(data.ok ? 'ok' : 'fail')
+                  } catch {
+                    setWebhookTest('fail')
+                  }
+                }}
+                className="btn-cyan px-3 py-1.5 rounded-lg text-xs shrink-0 disabled:opacity-40"
+              >
+                Testar
+              </button>
+            </div>
+            {webhookTest === 'ok' && <p className="text-xs text-green-400 mt-1.5">Enviado com sucesso ✓</p>}
+            {webhookTest === 'fail' && <p className="text-xs text-red-400 mt-1.5">Falha ao enviar — verifique a URL</p>}
+          </div>
+
+          {/* cooldown */}
+          <div className="pt-3 border-t border-[#1a2744]">
+            <label className="text-xs text-gray-500 block mb-2">Cooldown entre alertas do mesmo tipo</label>
+            <div className="flex gap-2 flex-wrap">
+              {[1, 5, 10, 30].map(min => (
+                <button key={min}
+                  onClick={() => setSettings(s => ({ ...s, alerts: { ...s.alerts, cooldownMinutes: min } }))}
+                  className={clsx('px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all',
+                    settings.alerts.cooldownMinutes === min
+                      ? 'bg-cyan-500/10 border-cyan-500/30 text-[#00d4ff]'
+                      : 'border-[#1a2744] text-gray-400 hover:text-white hover:bg-white/5'
+                  )}
+                >
+                  {min}min
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </section>

@@ -11,6 +11,7 @@ export interface WiFiNetwork {
   width?: 20 | 40 | 80 | 160
   security?: string
   bssid?: string
+  vendor?: string
 }
 
 interface Props {

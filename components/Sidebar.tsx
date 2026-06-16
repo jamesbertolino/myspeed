@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { loadSettings } from '@/lib/settings'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart3, Gauge, Activity, Wifi, Server, Zap, Radio, Settings, Menu, X, Monitor, Shield, LogOut } from 'lucide-react'
+import { BarChart3, Gauge, Activity, Wifi, Server, Zap, Radio, Settings, Menu, X, Monitor, Shield, LogOut, History } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
 
@@ -16,6 +16,7 @@ const nav = [
   { href: '/devices', icon: Monitor, label: 'Dispositivos' },
   { href: '/controllers', icon: Server, label: 'Controladores' },
   { href: '/security', icon: Shield, label: 'Centro de Segurança' },
+  { href: '/history', icon: History, label: 'Histórico' },
 ]
 
 const navBottom = [
@@ -288,13 +289,12 @@ function SidebarStatus() {
 
   const ping = useCallback(async () => {
     try {
-      const t0 = performance.now()
-      await fetch('https://speed.cloudflare.com/__down?bytes=0&_=' + Date.now(), {
-        cache: 'no-store', mode: 'no-cors',
-      })
-      const ms = Math.round(performance.now() - t0)
-      setLatency(ms)
-      setBeat(b => b + 1)
+      const res = await fetch(`/api/ping?target=1.1.1.1&_=${Date.now()}`, { cache: 'no-store' })
+      const data = await res.json()
+      if (typeof data.ms === 'number') {
+        setLatency(Math.round(data.ms))
+        setBeat(b => b + 1)
+      }
     } catch (_) {}
   }, [])
 
@@ -347,7 +347,7 @@ function SidebarStatus() {
         </div>
         <div className="flex justify-between text-[11px]">
           <span className="text-gray-500">Versão</span>
-          <span className="text-gray-400">v2.4.0</span>
+          <span className="text-gray-400">v2.9.0</span>
         </div>
       </div>
     </div>

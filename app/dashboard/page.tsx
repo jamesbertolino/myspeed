@@ -3,13 +3,29 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   Activity, Download, Upload, Globe, Wifi, Shield, Clock,
-  RefreshCw, TrendingUp, TrendingDown, Minus, MapPin, Building
+  RefreshCw, TrendingUp, TrendingDown, Minus, MapPin, Building, Network
 } from 'lucide-react'
 import LatencyChart from '@/components/LatencyChart'
 import StatCard from '@/components/StatCard'
 import { latencyColor, latencyLabel, calcJitter, jitterColor, jitterLabel, formatSpeed } from '@/lib/utils'
 import { loadSettings, AppSettings } from '@/lib/settings'
+import { checkAlerts, requestNotificationPermission } from '@/lib/alerts'
+
+const LAST_RUN_KEY = 'myspeed_auto_speedtest_last'
+function getLastAutoRun(): number {
+  try { return Number(localStorage.getItem(LAST_RUN_KEY) ?? 0) } catch { return 0 }
+}
 import clsx from 'clsx'
+
+interface IfaceStats {
+  name: string
+  rxBytes: number
+  txBytes: number
+  mac?: string
+  ipv4?: string
+}
+
+interface IfacePoint { t: number; rx: number; tx: number }
 
 interface IPInfo {
   ip: string
@@ -37,6 +53,19 @@ export default function Dashboard() {
   const [lostPackets, setLostPackets] = useState(0)
   const pingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const latencyHistory = useRef<number[]>([])
+
+  // auto speedtest badge
+  const [lastAutoRun,    setLastAutoRun]    = useState(0)
+  const [autoRunning,    setAutoRunning]    = useState(false)
+
+  // interface monitor
+  const [ifaces,       setIfaces]       = useState<IfaceStats[]>([])
+  const [selIface,     setSelIface]     = useState<string>('')
+  const [ifacePoints,  setIfacePoints]  = useState<IfacePoint[]>([])
+  const [ifaceRx,      setIfaceRx]      = useState(0)   // bps atual
+  const [ifaceTx,      setIfaceTx]      = useState(0)
+  const prevIfaceRef   = useRef<{ ts: number; rx: number; tx: number } | null>(null)
+  const ifaceTimerRef  = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     const s = loadSettings()
@@ -75,23 +104,32 @@ export default function Dashboard() {
   const doPing = useCallback(async () => {
     const t0 = performance.now()
     try {
-      let url: string
-      if (pingTarget === 'self') {
-        url = `/api/ping?_=${Date.now()}`
-      } else if (pingTarget === '1.1.1.1') {
-        url = `https://one.one.one.one/dns-query?name=a.test&type=A&_=${Date.now()}`
-      } else if (pingTarget === '8.8.8.8') {
-        url = `https://dns.google/dns-query?name=a.test&type=A&_=${Date.now()}`
+      // self e IPs conhecidos usam ICMP server-side via /api/ping para precisão real
+      const useIcmp = pingTarget === 'self' || pingTarget === '8.8.8.8' || pingTarget === '1.1.1.1'
+      let latency: number
+
+      if (useIcmp) {
+        const target = pingTarget === 'self' ? '8.8.8.8' : pingTarget
+        const res  = await fetch(`/api/ping?target=${target}&_=${Date.now()}`, { cache: 'no-store' })
+        const data = await res.json()
+        if (data.ms < 0) throw new Error('timeout')
+        latency = data.ms
       } else {
-        url = `/api/speedtest/ping?target=${encodeURIComponent(pingTarget)}&_=${Date.now()}`
+        const url = `/api/speedtest/ping?target=${encodeURIComponent(pingTarget)}&_=${Date.now()}`
+        await fetch(url, { cache: 'no-store' })
+        latency = performance.now() - t0
       }
-      await fetch(url, { cache: 'no-store' })
-      const latency = performance.now() - t0
+
       setSentPackets(s => s + 1)
       setCurrentLatency(latency)
       latencyHistory.current = [...latencyHistory.current.slice(-59), latency]
       setLatencyData(prev => [...prev.slice(-59), { t: Date.now(), latency }])
       if (latencyHistory.current.length >= 2) setJitter(calcJitter(latencyHistory.current))
+
+      // verificar limiares de alerta
+      const s = loadSettings()
+      const loss = sentPackets > 0 ? (lostPackets / sentPackets) * 100 : 0
+      checkAlerts(s.alerts, { pingMs: latency, packetLossPct: loss })
     } catch {
       setSentPackets(s => s + 1)
       setLostPackets(l => l + 1)
@@ -118,17 +156,91 @@ export default function Dashboard() {
 
   useEffect(() => {
     startPing()
+    requestNotificationPermission()
     return () => { if (pingRef.current) clearInterval(pingRef.current) }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // atualiza badge do último teste automático a cada 30s
+  useEffect(() => {
+    const tick = () => {
+      setLastAutoRun(getLastAutoRun())
+      // detecta se auto-teste está rodando checando se mudou nos últimos 15s
+      const last = getLastAutoRun()
+      setAutoRunning(last > 0 && Date.now() - last < 15_000)
+    }
+    tick()
+    const id = setInterval(tick, 30_000)
+    window.addEventListener('myspeed-settings-changed', tick)
+    return () => { clearInterval(id); window.removeEventListener('myspeed-settings-changed', tick) }
+  }, [])
+
+  // carrega lista de interfaces uma vez
+  useEffect(() => {
+    fetch('/api/interfaces')
+      .then(r => r.json())
+      .then(d => {
+        if (d.ifaces?.length) {
+          setIfaces(d.ifaces)
+          setSelIface(d.ifaces[0].name)
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  // polling de stats da interface selecionada
+  useEffect(() => {
+    if (!selIface) return
+    prevIfaceRef.current = null
+    setIfacePoints([])
+    setIfaceRx(0); setIfaceTx(0)
+
+    const poll = () => {
+      fetch('/api/interfaces')
+        .then(r => r.json())
+        .then(d => {
+          const iface = (d.ifaces as IfaceStats[]).find(i => i.name === selIface)
+          if (!iface) return
+          const now = d.ts as number
+          const prev = prevIfaceRef.current
+          if (prev) {
+            const dt  = (now - prev.ts) / 1000
+            const rx  = Math.round((iface.rxBytes - prev.rx) / dt)
+            const tx  = Math.round((iface.txBytes - prev.tx) / dt)
+            setIfaceRx(Math.max(0, rx))
+            setIfaceTx(Math.max(0, tx))
+            setIfacePoints(p => [...p.slice(-59), { t: now, rx: Math.max(0, rx), tx: Math.max(0, tx) }])
+          }
+          prevIfaceRef.current = { ts: now, rx: iface.rxBytes, tx: iface.txBytes }
+        })
+        .catch(() => {})
+    }
+
+    poll()
+    if (ifaceTimerRef.current) clearInterval(ifaceTimerRef.current)
+    ifaceTimerRef.current = setInterval(poll, 1000)
+    return () => { if (ifaceTimerRef.current) clearInterval(ifaceTimerRef.current) }
+  }, [selIface])
 
   const latColor = currentLatency ? latencyColor(currentLatency) : '#4a5568'
   const latLabel = currentLatency ? latencyLabel(currentLatency) : '—'
 
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto">
-      <div className="mb-6 md:mb-8">
-        <h1 className="text-xl md:text-2xl font-bold text-white">Dashboard</h1>
-        <p className="text-sm text-gray-500 mt-1">Monitoramento em tempo real da sua conexão</p>
+      <div className="mb-6 md:mb-8 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl md:text-2xl font-bold text-white">Dashboard</h1>
+          <p className="text-sm text-gray-500 mt-1">Monitoramento em tempo real da sua conexão</p>
+        </div>
+        {loadSettings().autoSpeedtest > 0 && (
+          <div className={clsx('flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs shrink-0', autoRunning ? 'bg-cyan-500/10 border-cyan-500/30 text-[#00d4ff]' : 'bg-white/5 border-white/10 text-gray-500')}>
+            <span className={clsx('w-1.5 h-1.5 rounded-full', autoRunning ? 'bg-[#00d4ff] animate-pulse' : 'bg-gray-600')} />
+            {autoRunning
+              ? 'Teste automático em andamento…'
+              : lastAutoRun > 0
+              ? `Último auto-teste: ${new Date(lastAutoRun).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+              : `Auto-teste a cada ${loadSettings().autoSpeedtest}h`}
+          </div>
+        )}
       </div>
 
       <div className="card p-4 mb-6">
@@ -236,6 +348,80 @@ export default function Dashboard() {
               </div>
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* Monitor de Interface */}
+      <div className="card p-5 mt-4">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Network className="w-4 h-4 text-[#7b2fff]" />
+            <h2 className="text-sm font-semibold text-white">Monitor de Interface</h2>
+          </div>
+          <select
+            value={selIface}
+            onChange={e => setSelIface(e.target.value)}
+            className="bg-[#0a1128] border border-[#1a2744] text-gray-300 text-xs rounded-lg px-2 py-1.5 outline-none"
+          >
+            {ifaces.map(i => (
+              <option key={i.name} value={i.name}>
+                {i.name}{i.ipv4 ? ` — ${i.ipv4}` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          <div className="bg-white/5 rounded-xl p-3 flex items-center gap-3">
+            <Download className="w-5 h-5 text-[#00d4ff] shrink-0" />
+            <div>
+              <p className="text-xs text-gray-500">Download</p>
+              <p className="text-lg font-bold mono" style={{ color: '#00d4ff' }}>
+                {ifaceRx >= 1_000_000
+                  ? (ifaceRx / 1_000_000).toFixed(1) + ' MB/s'
+                  : ifaceRx >= 1_000
+                  ? (ifaceRx / 1_000).toFixed(0) + ' KB/s'
+                  : ifaceRx + ' B/s'}
+              </p>
+            </div>
+          </div>
+          <div className="bg-white/5 rounded-xl p-3 flex items-center gap-3">
+            <Upload className="w-5 h-5 text-[#00ff88] shrink-0" />
+            <div>
+              <p className="text-xs text-gray-500">Upload</p>
+              <p className="text-lg font-bold mono" style={{ color: '#00ff88' }}>
+                {ifaceTx >= 1_000_000
+                  ? (ifaceTx / 1_000_000).toFixed(1) + ' MB/s'
+                  : ifaceTx >= 1_000
+                  ? (ifaceTx / 1_000).toFixed(0) + ' KB/s'
+                  : ifaceTx + ' B/s'}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Mini gráfico de barras */}
+        {ifacePoints.length > 1 ? (
+          <div className="flex items-end gap-px h-16">
+            {ifacePoints.map((p, i) => {
+              const maxVal = Math.max(...ifacePoints.map(x => Math.max(x.rx, x.tx)), 1)
+              return (
+                <div key={i} className="flex-1 flex flex-col justify-end gap-px h-full">
+                  <div className="rounded-sm" style={{ height: `${(p.tx / maxVal) * 100}%`, background: '#00ff8866', minHeight: 1 }} />
+                  <div className="rounded-sm" style={{ height: `${(p.rx / maxVal) * 100}%`, background: '#00d4ff66', minHeight: 1 }} />
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          <div className="h-16 flex items-center justify-center text-gray-600 text-xs">Coletando dados...</div>
+        )}
+        <div className="flex gap-4 mt-2">
+          <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-2 h-2 rounded-sm bg-[#00d4ff66]" />Download</span>
+          <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-2 h-2 rounded-sm bg-[#00ff8866]" />Upload</span>
+          {ifaces.find(i => i.name === selIface)?.mac && (
+            <span className="text-xs text-gray-600 ml-auto mono">{ifaces.find(i => i.name === selIface)?.mac}</span>
+          )}
         </div>
       </div>
 

@@ -70,10 +70,12 @@ export default function EcgMonitor() {
   const cycleStartRef = useRef(0)
   const cycleMsRef    = useRef(60_000 / BASE_BPM)
   const latencyRef    = useRef<number | null>(null)
+  const smoothMidRef  = useRef<number | null>(null)
 
   const [paused,  setPaused]  = useState(false)
   const [bpm,     setBpm]     = useState(BASE_BPM)
   const [latency, setLatency] = useState<number | null>(null)
+  const [ttl,     setTtl]     = useState<number | null>(null)
 
   const toggle = useCallback(() => {
     audioRef.current  = true
@@ -84,13 +86,19 @@ export default function EcgMonitor() {
   useEffect(() => {
     const probe = async () => {
       try {
-        const t0 = performance.now()
-        await fetch('https://speed.cloudflare.com/__down?bytes=0&_=' + Date.now(), {
-          cache: 'no-store', mode: 'no-cors',
-        })
-        const ms = Math.round(performance.now() - t0)
-        setLatency(ms)
-        latencyRef.current = ms
+        const res  = await fetch('/api/ping?_=' + Date.now(), { cache: 'no-store' })
+        const data = await res.json()
+        if (data.ms >= 0) {
+          setLatency(data.ms)
+          latencyRef.current = data.ms
+          // persiste no histórico (fire-and-forget)
+          fetch('/api/history/ping', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ms: data.ms, ttl: data.ttl }),
+          }).catch(() => {})
+        }
+        if (data.ttl !== null) setTtl(data.ttl)
       } catch (_) {}
     }
 
@@ -134,8 +142,16 @@ export default function EcgMonitor() {
 
       const W   = canvas.width
       const H   = canvas.height
-      const MID = H * 0.5
-      const AMP = H * 0.42
+      const AMP = H * 0.38
+
+      // Baseline sobe (y menor) quando ping sobe, desce quando ping cai
+      const MAX_MS    = 300
+      const ms        = latencyRef.current ?? 100
+      const norm      = Math.min(ms / MAX_MS, 1)                    // 0 = rápido, 1 = lento
+      const targetMid = H * 0.78 - norm * (H * 0.56)               // 0ms→78%, 300ms→22%
+      if (smoothMidRef.current === null) smoothMidRef.current = targetMid
+      smoothMidRef.current += (targetMid - smoothMidRef.current) * 0.04
+      const MID = smoothMidRef.current
 
       const elapsed = now - cycleStartRef.current
       const cycleMs = cycleMsRef.current
@@ -204,7 +220,7 @@ export default function EcgMonitor() {
 
   return (
     <div
-      className="hidden md:flex items-center gap-4 px-5 shrink-0 cursor-pointer select-none"
+      className="hidden md:flex items-center gap-3 px-3 shrink-0 cursor-pointer select-none"
       style={{
         height: 60,
         background: 'rgba(2,10,2,0.98)',
@@ -228,17 +244,29 @@ export default function EcgMonitor() {
 
       <canvas ref={canvasRef} className="flex-1" style={{ height: 44, display: 'block' }} />
 
-      {/* Latência ms — display principal, substitui BPM */}
-      <div className="text-center shrink-0">
-        <p style={{ fontSize: 9, letterSpacing: '0.15em', marginBottom: 1, color: paused ? '#1a2d1a' : latColor + '88' }}>PING</p>
-        <p style={{
-          fontSize: 22, fontWeight: 900, fontFamily: 'monospace', lineHeight: 1,
-          color: paused ? '#1a2d1a' : (latency !== null ? latColor : '#00ff4144'),
-          textShadow: paused ? 'none' : `0 0 12px ${latColor}`,
-        }}>
-          {paused ? '--' : latency !== null ? latency : '—'}
-          {!paused && latency !== null && <span style={{ fontSize: 10, fontWeight: 400, marginLeft: 2 }}>ms</span>}
-        </p>
+      {/* Latência + TTL */}
+      <div className="flex items-center gap-2 shrink-0 mr-2">
+        <div className="text-center" style={{ minWidth: 48 }}>
+          <p style={{ fontSize: 8, letterSpacing: '0.12em', marginBottom: 1, color: paused ? '#1a2d1a' : latColor + '88' }}>PING</p>
+          <p style={{
+            fontSize: 18, fontWeight: 900, fontFamily: 'monospace', lineHeight: 1,
+            color: paused ? '#1a2d1a' : (latency !== null ? latColor : '#00ff4144'),
+            textShadow: paused ? 'none' : `0 0 12px ${latColor}`,
+          }}>
+            {paused ? '--' : latency !== null ? latency : '—'}
+            {!paused && latency !== null && <span style={{ fontSize: 9, fontWeight: 400, marginLeft: 1 }}>ms</span>}
+          </p>
+        </div>
+        <div className="text-center" style={{ borderLeft: '1px solid rgba(0,255,65,0.15)', paddingLeft: 8, minWidth: 40 }}>
+          <p style={{ fontSize: 8, letterSpacing: '0.12em', marginBottom: 1, color: paused ? '#1a2d1a' : '#00ff4166' }}>TTL</p>
+          <p style={{
+            fontSize: 18, fontWeight: 900, fontFamily: 'monospace', lineHeight: 1,
+            color: paused ? '#1a2d1a' : (ttl !== null ? '#00d4ff' : '#00ff4144'),
+            textShadow: paused ? 'none' : ttl !== null ? '0 0 12px #00d4ff' : 'none',
+          }}>
+            {paused ? '--' : ttl !== null ? ttl : '—'}
+          </p>
+        </div>
       </div>
     </div>
   )
