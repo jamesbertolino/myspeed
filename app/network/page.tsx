@@ -38,6 +38,43 @@ const PING_PRESETS = [
 
 const DNS_TYPES = ['A', 'AAAA', 'MX', 'TXT', 'NS', 'CNAME', 'SOA', 'ALL']
 
+// Servidores DoH — medidos client-side direto do browser
+const DOH_SERVERS = [
+  { name: 'Cloudflare',     ip: '1.1.1.1',        flag: '🌐', doh: 'https://cloudflare-dns.com/dns-query' },
+  { name: 'Cloudflare 2',   ip: '1.0.0.1',        flag: '🌐', doh: 'https://cloudflare-dns.com/dns-query' },
+  { name: 'Google',         ip: '8.8.8.8',        flag: '🇺🇸', doh: 'https://dns.google/resolve' },
+  { name: 'Google 2',       ip: '8.8.4.4',        flag: '🇺🇸', doh: 'https://dns.google/resolve' },
+  { name: 'Quad9',          ip: '9.9.9.9',        flag: '🇨🇭', doh: 'https://dns.quad9.net/dns-query' },
+  { name: 'OpenDNS',        ip: '208.67.222.222', flag: '🇺🇸', doh: 'https://doh.opendns.com/dns-query' },
+  { name: 'AdGuard',        ip: '94.140.14.14',   flag: '🛡️',  doh: 'https://dns.adguard.com/resolve' },
+  { name: 'NextDNS',        ip: '45.90.28.0',     flag: '🔒', doh: 'https://dns.nextdns.io/resolve' },
+  { name: 'CleanBrowsing',  ip: '185.228.168.9',  flag: '🧹', doh: 'https://doh.cleanbrowsing.org/doh/security-filter/' },
+]
+
+const BENCH_DOMAINS = ['google.com', 'cloudflare.com', 'github.com']
+const BENCH_TIMEOUT = 3000
+
+async function measureDoH(url: string): Promise<number[]> {
+  return Promise.all(
+    BENCH_DOMAINS.map(async domain => {
+      const t0  = performance.now()
+      const sep = url.includes('?') ? '&' : '?'
+      try {
+        await Promise.race([
+          fetch(`${url}${sep}name=${domain}&type=A&_=${Date.now()}`, {
+            headers: { Accept: 'application/dns-json' },
+            cache: 'no-store',
+          }),
+          new Promise<never>((_, r) => setTimeout(() => r(new Error('timeout')), BENCH_TIMEOUT)),
+        ])
+        return Math.round(performance.now() - t0)
+      } catch {
+        return BENCH_TIMEOUT
+      }
+    })
+  )
+}
+
 interface BenchResult {
   name: string
   ip: string
@@ -138,17 +175,36 @@ export default function NetworkPage() {
     setBenchDone(false)
     setBenchResults([])
     try {
-      const [mainRes, customRes] = await Promise.all([
-        fetch('/api/dns-benchmark').then(r => r.json()),
-        benchCustomIp.trim()
-          ? fetch(`/api/dns-benchmark?ip=${encodeURIComponent(benchCustomIp.trim())}`).then(r => r.json())
-          : Promise.resolve(null),
+      // DoH client-side em paralelo — mede do browser até cada DNS
+      const dohPromises = DOH_SERVERS.map(async srv => {
+        const samples = await measureDoH(srv.doh)
+        const avg     = Math.round(samples.reduce((a, b) => a + b, 0) / samples.length)
+        const timeout = samples.every(s => s >= BENCH_TIMEOUT)
+        return { ...srv, avg, samples, timeout }
+      })
+
+      // IP personalizado (gateway local) — medido server-side pois não tem DoH
+      const customTrim = benchCustomIp.trim()
+      const customPromise = customTrim
+        ? fetch(`/api/dns-benchmark?ip=${encodeURIComponent(customTrim)}`).then(r => r.json())
+        : Promise.resolve(null)
+
+      const [dohResults, customRes] = await Promise.all([
+        Promise.all(dohPromises),
+        customPromise,
       ])
-      const rows: BenchResult[] = mainRes.results ?? []
+
+      const rows: BenchResult[] = [...dohResults]
       if (customRes && customRes.avg != null) {
-        rows.push({ name: 'Personalizado', ip: benchCustomIp.trim(), flag: '⚙️', avg: customRes.avg, samples: customRes.samples, timeout: customRes.timeout })
-        rows.sort((a, b) => (a.timeout ? 1 : 0) - (b.timeout ? 1 : 0) || a.avg - b.avg)
+        rows.push({
+          name: `Personalizado (${customTrim})`,
+          ip: customTrim, flag: '⚙️',
+          avg: customRes.avg, samples: customRes.samples,
+          timeout: customRes.timeout,
+        })
       }
+
+      rows.sort((a, b) => (a.timeout ? 1 : 0) - (b.timeout ? 1 : 0) || a.avg - b.avg)
       setBenchResults(rows)
       setBenchDone(true)
     } finally {
@@ -501,12 +557,14 @@ export default function NetworkPage() {
           {/* controles */}
           <div className="card p-4 flex flex-wrap items-end gap-4">
             <div className="flex-1 min-w-48">
-              <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">IP personalizado (opcional)</label>
+              <label className="text-xs text-gray-500 mb-1.5 block uppercase tracking-wider">
+                IP personalizado — gateway/DNS local <span className="text-gray-600 normal-case">(opcional)</span>
+              </label>
               <input
                 className="dark-input"
                 value={benchCustomIp}
                 onChange={e => setBenchCustomIp(e.target.value)}
-                placeholder="ex: 192.168.1.1 (gateway)"
+                placeholder="ex: 192.168.1.1"
                 onKeyDown={e => e.key === 'Enter' && !benchLoading && runBenchmark()}
               />
             </div>
@@ -523,7 +581,7 @@ export default function NetworkPage() {
           {benchLoading && benchResults.length === 0 && (
             <div className="card p-8 flex flex-col items-center gap-3 text-gray-500">
               <Loader2 className="w-8 h-8 animate-spin text-[#00d4ff]" />
-              <p className="text-sm">Consultando {10 + (benchCustomIp ? 1 : 0)} servidores em paralelo…</p>
+              <p className="text-sm">Medindo {DOH_SERVERS.length + (benchCustomIp ? 1 : 0)} servidores via DoH direto do seu browser…</p>
             </div>
           )}
 
@@ -565,6 +623,9 @@ export default function NetworkPage() {
                             <div className="flex items-center gap-2">
                               <span className="text-sm text-white font-medium truncate">{r.name}</span>
                               <span className="text-xs text-gray-600 mono shrink-0">{r.ip}</span>
+                              {r.name.startsWith('Personalizado') && (
+                                <span className="text-[10px] px-1 py-0.5 rounded bg-white/5 text-gray-600 shrink-0">server-side</span>
+                              )}
                             </div>
                             <div className="relative h-1.5 bg-white/5 rounded-full mt-1.5 overflow-hidden">
                               <div
@@ -594,7 +655,7 @@ export default function NetworkPage() {
                 </div>
 
                 <p className="text-xs text-gray-600 mt-4 text-center">
-                  Média de {3} resoluções reais por servidor · menor valor = mais rápido para sua rede
+                  Medido via DNS-over-HTTPS direto do seu browser · {BENCH_DOMAINS.length} domínios por servidor · menor valor = mais rápido para você
                 </p>
               </div>
             )
