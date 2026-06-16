@@ -241,26 +241,36 @@ export default function WiFiPage() {
   const cleanNetworks = useMemo(() => stripGhostHidden(networks), [networks])
   const ghostCount = networks.length - cleanNetworks.length
 
+  // A rede com sinal mais forte na banda é, na prática, o roteador do próprio
+  // usuário. Ela NÃO pode contar como interferência contra si mesma — senão, ao
+  // mover para o canal recomendado, o próprio sinal forte passa a "reprovar" o
+  // canal que ele mesmo ocupa.
+  const selfNetwork = (b: '2.4' | '5'): WiFiNetwork | null => {
+    const nets = cleanNetworks.filter(n => n.band === b)
+    if (!nets.length) return null
+    return nets.reduce((strongest, n) => n.signal > strongest.signal ? n : strongest, nets[0])
+  }
+  const self24 = useMemo(() => selfNetwork('2.4'), [cleanNetworks])
+  const self5  = useMemo(() => selfNetwork('5'), [cleanNetworks])
+  const myChannel24 = self24?.channel ?? null
+  const myChannel5  = self5?.channel ?? null
+
+  // Lista usada em todo cálculo de interferência/canal — exclui a própria rede
+  const competitorNetworks = useMemo(
+    () => cleanNetworks.filter(n => n !== self24 && n !== self5),
+    [cleanNetworks, self24, self5]
+  )
+
   // Recalcula a recomendação de canal com histerese (mantém o canal anterior se a
   // diferença for pequena), evitando que a sugestão troque a cada nova amostragem.
   useEffect(() => {
-    setRecommended24(prev => bestChannel(cleanNetworks, '2.4', prev))
-    setRecommended5(prev => bestChannel(cleanNetworks, '5', prev))
+    setRecommended24(prev => bestChannel(competitorNetworks, '2.4', prev))
+    setRecommended5(prev => bestChannel(competitorNetworks, '5', prev))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cleanNetworks])
+  }, [competitorNetworks])
 
   const currentBandNets = networks.filter(n => n.band === band)
   const recommended = band === '2.4' ? recommended24 : recommended5
-
-  // Canal "atual": a rede com sinal mais forte na banda é, na prática, o roteador do
-  // próprio usuário (a um clique de distância do dispositivo que está escaneando).
-  const myChannel = (b: '2.4' | '5'): number | null => {
-    const nets = networks.filter(n => n.band === b)
-    if (!nets.length) return null
-    return nets.reduce((strongest, n) => n.signal > strongest.signal ? n : strongest, nets[0]).channel
-  }
-  const myChannel24 = myChannel('2.4')
-  const myChannel5  = myChannel('5')
 
   const handleExportPdf = async () => {
     setExporting(true)
@@ -288,7 +298,7 @@ export default function WiFiPage() {
 
   // Get channel interference score
   const getInterference = (ch: number): 'none' | 'low' | 'medium' | 'high' => {
-    const others = cleanNetworks.filter(n => n.band === band && n.ssid !== currentBandNets[0]?.ssid)
+    const others = competitorNetworks.filter(n => n.band === band)
     const nearby = others.filter(n => Math.abs(n.channel - ch) < (band === '2.4' ? 5 : 4))
     if (nearby.length === 0) return 'none'
     if (nearby.length === 1) return 'low'
@@ -517,8 +527,8 @@ export default function WiFiPage() {
         {(() => {
           const mine = band === '2.4' ? myChannel24 : myChannel5
           if (mine == null) return null
-          const minePenalty = channelPenalty(cleanNetworks, band, mine)
-          const recPenalty  = channelPenalty(cleanNetworks, band, recommended)
+          const minePenalty = channelPenalty(competitorNetworks, band, mine)
+          const recPenalty  = channelPenalty(competitorNetworks, band, recommended)
           const sameChannel = mine === recommended
           return (
             <div className="flex items-center gap-3 mb-4 px-3 py-2 rounded-lg bg-[#0f1a35] border border-[#1a2744] text-xs flex-wrap">
