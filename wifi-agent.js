@@ -368,7 +368,8 @@ function isPrivateIp(ip) {
   return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
 }
 
-function getArpHosts(targetSubnet) {
+function getArpHosts(rangeCheck) {
+  const inRange = (ip) => !rangeCheck || rangeCheck(ip)
   const ips = new Map()
   try {
     let out
@@ -376,14 +377,14 @@ function getArpHosts(targetSubnet) {
       out = execSync('arp -a', { encoding: 'utf8', timeout: 5000 })
       for (const line of out.split('\n')) {
         const m = line.match(/\s+([\d.]+)\s+([\da-f]{2}[-][\da-f]{2}[-][\da-f]{2}[-][\da-f]{2}[-][\da-f]{2}[-][\da-f]{2})\s+/i)
-        if (m && isPrivateIp(m[1]) && (!targetSubnet || m[1].startsWith(targetSubnet + '.')))
+        if (m && isPrivateIp(m[1]) && inRange(m[1]))
           ips.set(m[1], m[2].replace(/-/g, ':').toLowerCase())
       }
     } else if (process.platform === 'darwin') {
       out = execSync('arp -a 2>/dev/null', { encoding: 'utf8', timeout: 5000 })
       for (const line of out.split('\n')) {
         const m = line.match(/\(([^)]+)\)\s+at\s+([\da-f:]{17})/i)
-        if (m && m[2] !== 'ff:ff:ff:ff:ff:ff' && isPrivateIp(m[1]) && (!targetSubnet || m[1].startsWith(targetSubnet + '.')))
+        if (m && m[2] !== 'ff:ff:ff:ff:ff:ff' && isPrivateIp(m[1]) && inRange(m[1]))
           ips.set(m[1], m[2].toLowerCase())
       }
     } else {
@@ -391,7 +392,7 @@ function getArpHosts(targetSubnet) {
         out = execSync('ip neigh show 2>/dev/null', { encoding: 'utf8', timeout: 5000 })
         for (const line of out.split('\n')) {
           const m = line.match(/^([\d.]+)\s+\S+\s+\S+\s+([\da-f:]{17})/i)
-          if (m && isPrivateIp(m[1]) && (!targetSubnet || m[1].startsWith(targetSubnet + '.')))
+          if (m && isPrivateIp(m[1]) && inRange(m[1]))
             ips.set(m[1], m[2].toLowerCase())
         }
       } catch (_) {
@@ -399,7 +400,7 @@ function getArpHosts(targetSubnet) {
           out = execSync('arp -n 2>/dev/null', { encoding: 'utf8', timeout: 5000 })
           for (const line of out.split('\n').slice(1)) {
             const p = line.trim().split(/\s+/)
-            if (p.length >= 3 && p[2] && p[2].includes(':') && p[2] !== '(incomplete)' && isPrivateIp(p[0]) && (!targetSubnet || p[0].startsWith(targetSubnet + '.')))
+            if (p.length >= 3 && p[2] && p[2].includes(':') && p[2] !== '(incomplete)' && isPrivateIp(p[0]) && inRange(p[0]))
               ips.set(p[0], p[2].toLowerCase())
           }
         } catch (_2) {}
@@ -504,8 +505,12 @@ async function handleDevices(req, res) {
   const reqUrl = new URL(req.url, 'http://localhost')
   const preferSubnet = reqUrl.searchParams.get('subnet') || undefined
   const subnetInfo = getLocalSubnet(preferSubnet)
-  const targetSubnet = preferSubnet || (subnetInfo ? subnetInfo.subnet : null)
-  const arpHosts = getArpHosts(targetSubnet)
+  // checa pelo range real da rede (network..broadcast) — necessario p/ /23 ou maiores,
+  // onde a rede cobre mais de um terceiro octeto (ex: 10.10.0.x e 10.10.1.x)
+  const inSubnetRange = subnetInfo
+    ? (ip) => { const n = ipToInt(ip); return n >= subnetInfo.network && n <= subnetInfo.broadcast }
+    : null
+  const arpHosts = getArpHosts(inSubnetRange)
 
   if (subnetInfo) {
     const totalHosts = subnetInfo.broadcast - subnetInfo.network - 1
@@ -523,9 +528,9 @@ async function handleDevices(req, res) {
     )
   }
 
-  // Filtro final: apenas IPs do subnet alvo, sem broadcast nem multicast
+  // Filtro final: apenas IPs do range real da rede, sem broadcast nem multicast
   const hosts = [...arpHosts.entries()].filter(([ip]) => {
-    if (!targetSubnet || !ip.startsWith(targetSubnet + '.')) return false
+    if (!inSubnetRange || !inSubnetRange(ip)) return false
     const last = parseInt(ip.split('.')[3])
     if (last === 0 || last === 255) return false
     const first = parseInt(ip.split('.')[0])
