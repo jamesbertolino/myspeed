@@ -41,10 +41,8 @@ const EXAMPLE_NETWORKS_5: WiFiNetwork[] = [
 // Penalidade de um canal = a PIOR interferência que ele sofre (não a soma de todas).
 // Isso favorece o canal mais distante do vizinho mais próximo/forte, em vez de somar
 // pequenas interferências de várias redes fracas e descartar erroneamente um canal livre.
-// Compara os primeiros 5 bytes do MAC (OUI + 2 bytes do fabricante).
-// Roteadores multi-SSID atribuem BSSIDs sequencialmente no último byte
-// (ex: aa:bb:cc:dd:ee:01 para SSID principal, aa:bb:cc:dd:ee:02 para hidden),
-// então prefixo de 5 bytes identifica o mesmo hardware com boa precisão.
+
+// Prefixo de 5 bytes (10 hex): identifica mesmo hardware quando AP usa último byte sequencial.
 function sameMacPrefix(a?: string, b?: string): boolean {
   if (!a || !b) return false
   const norm = (m: string) => m.toLowerCase().replace(/[^0-9a-f]/g, '')
@@ -52,28 +50,43 @@ function sameMacPrefix(a?: string, b?: string): boolean {
   return na.length >= 10 && nb.length >= 10 && na.slice(0, 10) === nb.slice(0, 10)
 }
 
-// Retorna o SSID da rede nomeada cujo MAC tem o mesmo prefixo de 5 bytes
-// que a rede hidden (qualquer canal/banda), ou null se não houver match.
+// Prefixo de 4 bytes (8 hex): fallback para APs que incrementam o 5° byte por radio/SSID
+// (ex: Ubiquiti/UniFi com BSSIDs como f4:92:bf:03:58:xx para SSID1 e f4:92:bf:03:59:xx para hidden).
+// Requer também sinal próximo (±15dBm) para evitar falsos positivos de mesmo fabricante.
+function sameMacPrefix4(a?: string, b?: string): boolean {
+  if (!a || !b) return false
+  const norm = (m: string) => m.toLowerCase().replace(/[^0-9a-f]/g, '')
+  const na = norm(a), nb = norm(b)
+  return na.length >= 8 && nb.length >= 8 && na.slice(0, 8) === nb.slice(0, 8)
+}
+
+// Retorna o SSID da rede nomeada cujo MAC corresponde à rede hidden.
 function sameDeviceAs(hidden: WiFiNetwork, named: WiFiNetwork[]): string | null {
   if (!hidden.bssid) return null
-  const match = named.find(m => sameMacPrefix(m.bssid, hidden.bssid))
+  const match = named.find(m =>
+    sameMacPrefix(m.bssid, hidden.bssid) ||
+    (sameMacPrefix4(m.bssid, hidden.bssid) && Math.abs(m.signal - hidden.signal) <= 15)
+  )
   return match?.ssid ?? null
 }
 
-// Descarta redes "Hidden" que são o mesmo equipamento que uma rede nomeada:
-//   1. MAC prefix idêntico (5 bytes) — qualquer canal: mesmo hardware, SEMPRE excluir
-//   2. Sinal quase idêntico (±3dBm) no mesmo canal/banda sem BSSID — fallback
-// Antes excluíamos apenas quando o canal era igual. Agora: se o MAC bate, é o mesmo
-// roteador emitindo num SSID oculto em canal diferente (ex: radio IoT/backhaul) —
-// não é vizinho, não deve penalizar nenhum canal.
+// Descarta redes "Hidden" que são o mesmo equipamento que uma rede nomeada.
+// Três critérios (qualquer um basta):
+//   1. MAC prefix 5 bytes — qualquer banda/canal: mesmo hardware, excluir sempre
+//   2. MAC prefix 4 bytes + sinal ±15dBm — cobre APs que variam o 5° byte por radio (ex: UniFi)
+//   3. Mesma banda + canal + sinal ±3dBm — fallback quando BSSID não está disponível
+// NOTA: a condição de banda NÃO se aplica ao MAC prefix — um AP dual-band emite hidden
+// em ambas as bandas com MACs do mesmo prefixo. Restringir por banda deixaria passar
+// o hidden da banda oposta como "vizinho real".
 function stripGhostHidden(networks: WiFiNetwork[]): WiFiNetwork[] {
   const named = networks.filter(n => n.ssid && n.ssid !== 'Hidden')
   return networks.filter(n => {
     if (n.ssid !== 'Hidden') return true
-    const isGhost = named.some(m => m.band === n.band && (
-      sameMacPrefix(m.bssid, n.bssid) ||                                    // mesmo hardware, qualquer canal
-      (m.channel === n.channel && Math.abs(m.signal - n.signal) <= 3)       // mesmo canal + sinal idêntico (sem BSSID)
-    ))
+    const isGhost = named.some(m =>
+      sameMacPrefix(m.bssid, n.bssid) ||                                              // 5-byte: qualquer banda/canal
+      (sameMacPrefix4(m.bssid, n.bssid) && Math.abs(m.signal - n.signal) <= 15) ||   // 4-byte + sinal próximo
+      (m.band === n.band && m.channel === n.channel && Math.abs(m.signal - n.signal) <= 3) // fallback sem BSSID
+    )
     return !isGhost
   })
 }
@@ -251,19 +264,20 @@ export default function WiFiPage() {
     try {
       // Monta payload rico: AI recebe contexto completo sobre quais são seu AP,
       // quais hidden são fantasmas e quais são vizinhos reais.
-      const named = nets.filter(n => n.ssid !== 'Hidden')
-      const ghostNets = nets.filter(n => {
-        if (n.ssid !== 'Hidden') return false
-        return named.some(m => m.band === n.band && m.channel === n.channel && (
-          sameMacPrefix(m.bssid, n.bssid) || Math.abs(m.signal - n.signal) <= 3
-        ))
-      })
       const clean = stripGhostHidden(nets)
+      const ghostNets = nets.filter(n => n.ssid === 'Hidden' && !clean.includes(n))
       const s24 = clean.filter(n => n.band === '2.4').reduce<WiFiNetwork | null>(
         (s, n) => !s || n.signal > s.signal ? n : s, null)
       const s5 = clean.filter(n => n.band === '5').reduce<WiFiNetwork | null>(
         (s, n) => !s || n.signal > s.signal ? n : s, null)
-      const compNets = clean.filter(n => n !== s24 && n !== s5)
+      const compNets = clean.filter(n => {
+        if (n === s24 || n === s5) return false
+        if (n.ssid === 'Hidden') {
+          if (s24?.bssid && (sameMacPrefix(n.bssid, s24.bssid) || sameMacPrefix4(n.bssid, s24.bssid))) return false
+          if (s5?.bssid  && (sameMacPrefix(n.bssid, s5.bssid)  || sameMacPrefix4(n.bssid, s5.bssid)))  return false
+        }
+        return true
+      })
 
       const body = {
         networks: nets,
@@ -318,9 +332,20 @@ export default function WiFiPage() {
   const myChannel24 = self24?.channel ?? null
   const myChannel5  = self5?.channel ?? null
 
-  // Lista usada em todo cálculo de interferência/canal — exclui a própria rede
+  // Lista usada em todo cálculo de interferência/canal — exclui a própria rede.
+  // Segunda linha de defesa: se um hidden do próprio AP escapou do stripGhostHidden
+  // (ex: MAC com variação no 4° byte não detectada), ele ainda é excluído aqui
+  // comparando com o BSSID de self24/self5 — evita o "self-conflict" (canal livre
+  // aparecendo como congestionado porque o próprio AP está nele).
   const competitorNetworks = useMemo(
-    () => cleanNetworks.filter(n => n !== self24 && n !== self5),
+    () => cleanNetworks.filter(n => {
+      if (n === self24 || n === self5) return false
+      if (n.ssid === 'Hidden') {
+        if (self24?.bssid && (sameMacPrefix(n.bssid, self24.bssid) || sameMacPrefix4(n.bssid, self24.bssid))) return false
+        if (self5?.bssid  && (sameMacPrefix(n.bssid, self5.bssid)  || sameMacPrefix4(n.bssid, self5.bssid)))  return false
+      }
+      return true
+    }),
     [cleanNetworks, self24, self5]
   )
 

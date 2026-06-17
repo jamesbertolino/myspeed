@@ -10,6 +10,16 @@ import clsx from 'clsx'
 
 const CHANGELOG: { version: string; date: string; items: string[] }[] = [
   {
+    version: 'v3.0.3',
+    date: '2026-06-17',
+    items: [
+      'Ghost detection cross-banda: hidden de AP dual-band (ex: UniFi) detectado em qualquer banda',
+      'Prefixo MAC de 4 bytes como fallback (cobre APs que variam o 5° byte por radio)',
+      'Segunda linha de defesa em competitorNetworks: hidden do próprio AP excluído mesmo escapando do stripGhostHidden',
+      'Corrigido falso conflito de canal (canal livre aparecendo como congestionado pelo próprio AP)',
+    ],
+  },
+  {
     version: 'v3.0.2',
     date: '2026-06-17',
     items: [
@@ -441,7 +451,7 @@ function SidebarStatus() {
             onClick={() => setShowChangelog(true)}
             className="flex items-center gap-0.5 text-gray-400 hover:text-cyan-400 transition-colors group"
           >
-            v3.0.2
+            v3.0.3
             <ChevronDown className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
           </button>
         </div>
