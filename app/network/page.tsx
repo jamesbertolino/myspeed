@@ -750,7 +750,12 @@ export default function NetworkPage() {
           <span className="w-2 h-2 rounded-full bg-green-400 shrink-0 animate-pulse" />
           <div className="flex-1 min-w-0">
             <span className="text-green-400 font-semibold">Agente Local Conectado</span>
-            <span className="text-green-400/60 ml-2">{agentInfo?.hostname} ({agentInfo?.platform})</span>
+            <span className="text-green-400/60 ml-2">
+              {agentInfo?.hostname}
+              {agentInfo?.platform && (
+                <> ({agentInfo.platform === 'android' ? 'Android' : agentInfo.platform === 'win32' ? 'Windows' : agentInfo.platform === 'darwin' ? 'macOS' : agentInfo.platform})</>
+              )}
+            </span>
             <span className="text-green-400/50 ml-2">— todos os testes originam do seu dispositivo, incluindo IPs internos</span>
           </div>
         </div>
@@ -761,7 +766,9 @@ export default function NetworkPage() {
             <span className="text-gray-400">Agente local não detectado</span>
             <span className="text-gray-600 ml-2">— traceroute, DNS e port scan originam do servidor cloud</span>
             <span className="text-gray-600 block mt-0.5">
-              Para testes locais: <code className="text-gray-500">node scripts/local-agent.js</code>
+              Desktop: <code className="text-gray-500">node scripts/local-agent.js</code>
+              <span className="mx-1.5 opacity-40">·</span>
+              Android (Termux): <code className="text-gray-500">node scripts/android-agent.js</code>
             </span>
           </div>
         </div>
