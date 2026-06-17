@@ -407,13 +407,14 @@ export default function WiFiPage() {
     }))
   }
 
-  // Get channel interference score — aplica o mesmo noise floor do channelPenalty
+  // Get channel interference score baseado em penalidade real (sinal × distância de canal),
+  // não na contagem de redes — um único AP forte em -61dBm é "moderado", não "baixo".
+  // Thresholds: <10=none, <30=low, <50=medium, >=50=high
   const getInterference = (ch: number): 'none' | 'low' | 'medium' | 'high' => {
-    const others = competitorNetworks.filter(n => n.band === band && n.signal >= NOISE_FLOOR_DBM)
-    const nearby = others.filter(n => Math.abs(n.channel - ch) < (band === '2.4' ? 5 : 4))
-    if (nearby.length === 0) return 'none'
-    if (nearby.length === 1) return 'low'
-    if (nearby.length === 2) return 'medium'
+    const penalty = channelPenalty(competitorNetworks, band, ch)
+    if (penalty < 10) return 'none'
+    if (penalty < 30) return 'low'
+    if (penalty < 50) return 'medium'
     return 'high'
   }
 
