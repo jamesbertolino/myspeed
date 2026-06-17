@@ -63,7 +63,9 @@ jobs:
             -keyalg RSA -keysize 2048 -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US" \
             -storepass android -keypass android
-          $ANDROID_HOME/build-tools/34.0.0/apksigner sign \
+          # Find apksigner regardless of exact build-tools version
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name "apksigner" | sort -V | tail -1)
+          "$APKSIGNER" sign \
             --ks debug.keystore --ks-key-alias androiddebugkey \
             --ks-pass pass:android --key-pass pass:android \
             --out app/build/outputs/apk/release/MySpeedMonitor-signed.apk \
