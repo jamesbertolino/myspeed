@@ -10,6 +10,14 @@ import clsx from 'clsx'
 
 const CHANGELOG: { version: string; date: string; items: string[] }[] = [
   {
+    version: 'v3.0.5',
+    date: '2026-06-17',
+    items: [
+      'Agente detecta BSSID da rede conectada (netsh/airport/nmcli) e exclui o próprio AP com precisão',
+      'selfNetwork usa BSSID real quando disponível — sem depender da heurística "sinal mais forte"',
+    ],
+  },
+  {
     version: 'v3.0.4',
     date: '2026-06-17',
     items: [
@@ -459,7 +467,7 @@ function SidebarStatus() {
             onClick={() => setShowChangelog(true)}
             className="flex items-center gap-0.5 text-gray-400 hover:text-cyan-400 transition-colors group"
           >
-            v3.0.4
+            v3.0.5
             <ChevronDown className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
           </button>
         </div>

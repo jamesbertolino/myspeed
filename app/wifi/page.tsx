@@ -150,6 +150,7 @@ export default function WiFiPage() {
   const [lastUpdate, setLastUpdate] = useState<number | null>(null)
   const [recommended24, setRecommended24] = useState<number>(NON_OVERLAPPING_24[0])
   const [recommended5, setRecommended5] = useState<number>(NON_OVERLAPPING_5[0])
+  const [connectedBssid, setConnectedBssid] = useState<string | null>(null)
 
   // Detect Chrome extension
   useEffect(() => {
@@ -187,6 +188,7 @@ export default function WiFiPage() {
         signal: AbortSignal.timeout(20000),
       })
       const data = await res.json()
+      if (data.connectedBssid) setConnectedBssid(data.connectedBssid.toLowerCase())
       return data.networks?.length > 0 ? data.networks : null
     } catch {
       return null
@@ -319,17 +321,26 @@ export default function WiFiPage() {
   const cleanNetworks = useMemo(() => stripGhostHidden(networks), [networks])
   const ghostCount = networks.length - cleanNetworks.length
 
-  // A rede com sinal mais forte na banda é, na prática, o roteador do próprio
-  // usuário. Ela NÃO pode contar como interferência contra si mesma — senão, ao
-  // mover para o canal recomendado, o próprio sinal forte passa a "reprovar" o
-  // canal que ele mesmo ocupa.
+  // Identifica o próprio AP na banda.
+  // Prioridade: BSSID da rede conectada (retornado pelo agente via netsh/airport/nmcli).
+  // Fallback: rede com sinal mais forte na banda (heurística quando BSSID não disponível).
+  // O AP próprio é excluído de todos os cálculos de interferência.
   const selfNetwork = (b: '2.4' | '5'): WiFiNetwork | null => {
     const nets = cleanNetworks.filter(n => n.band === b)
     if (!nets.length) return null
+    if (connectedBssid) {
+      const norm = (m: string) => m.toLowerCase().replace(/[^0-9a-f]/g, '')
+      const connNorm = norm(connectedBssid)
+      // Procura match exato de BSSID, ou pelo prefixo de 5 bytes (APs multi-SSID)
+      const exact = nets.find(n => n.bssid && norm(n.bssid) === connNorm)
+      if (exact) return exact
+      const byPrefix = nets.find(n => sameMacPrefix(n.bssid, connectedBssid))
+      if (byPrefix) return byPrefix
+    }
     return nets.reduce((strongest, n) => n.signal > strongest.signal ? n : strongest, nets[0])
   }
-  const self24 = useMemo(() => selfNetwork('2.4'), [cleanNetworks])
-  const self5  = useMemo(() => selfNetwork('5'), [cleanNetworks])
+  const self24 = useMemo(() => selfNetwork('2.4'), [cleanNetworks, connectedBssid])
+  const self5  = useMemo(() => selfNetwork('5'), [cleanNetworks, connectedBssid])
   const myChannel24 = self24?.channel ?? null
   const myChannel5  = self5?.channel ?? null
 
