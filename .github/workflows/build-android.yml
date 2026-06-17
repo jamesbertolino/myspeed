@@ -44,7 +44,7 @@ jobs:
         working-directory: android-monitor
         run: |
           # Bootstrap: use system gradle to generate proper wrapper jar
-          GRADLE_VERSION=8.6
+          GRADLE_VERSION=8.7
           GRADLE_URL="https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
           curl -sL "$GRADLE_URL" -o /tmp/gradle.zip
           unzip -q /tmp/gradle.zip -d /tmp/gradle
@@ -54,7 +54,7 @@ jobs:
 
       - name: Build release APK
         working-directory: android-monitor
-        run: ./gradlew assembleRelease --no-daemon
+        run: ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tail -100
 
       - name: Sign APK (debug keystore for distribution)
         working-directory: android-monitor
