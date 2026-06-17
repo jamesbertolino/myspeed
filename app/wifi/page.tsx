@@ -275,9 +275,13 @@ export default function WiFiPage() {
         (s, n) => !s || n.signal > s.signal ? n : s, null)
       const compNets = clean.filter(n => {
         if (n === s24 || n === s5) return false
-        if (n.ssid === 'Hidden') {
-          if (s24?.bssid && (sameMacPrefix(n.bssid, s24.bssid) || sameMacPrefix4(n.bssid, s24.bssid))) return false
-          if (s5?.bssid  && (sameMacPrefix(n.bssid, s5.bssid)  || sameMacPrefix4(n.bssid, s5.bssid)))  return false
+        if (s24?.bssid) {
+          if (sameMacPrefix(n.bssid, s24.bssid)) return false
+          if (sameMacPrefix4(n.bssid, s24.bssid) && Math.abs(n.signal - s24.signal) <= 15) return false
+        }
+        if (s5?.bssid) {
+          if (sameMacPrefix(n.bssid, s5.bssid)) return false
+          if (sameMacPrefix4(n.bssid, s5.bssid) && Math.abs(n.signal - s5.signal) <= 15) return false
         }
         return true
       })
@@ -345,16 +349,19 @@ export default function WiFiPage() {
   const myChannel5  = self5?.channel ?? null
 
   // Lista usada em todo cálculo de interferência/canal — exclui a própria rede.
-  // Segunda linha de defesa: se um hidden do próprio AP escapou do stripGhostHidden
-  // (ex: MAC com variação no 4° byte não detectada), ele ainda é excluído aqui
-  // comparando com o BSSID de self24/self5 — evita o "self-conflict" (canal livre
-  // aparecendo como congestionado porque o próprio AP está nele).
+  // Exclui QUALQUER rede (nomeada ou hidden) cujo MAC prefix coincide com self24/self5.
+  // Isso cobre APs multi-SSID: ex. MYCOMP + LABORATORIO no mesmo hardware — ambos
+  // são o próprio roteador e nenhum deve contar como interferência no próprio canal.
   const competitorNetworks = useMemo(
     () => cleanNetworks.filter(n => {
       if (n === self24 || n === self5) return false
-      if (n.ssid === 'Hidden') {
-        if (self24?.bssid && (sameMacPrefix(n.bssid, self24.bssid) || sameMacPrefix4(n.bssid, self24.bssid))) return false
-        if (self5?.bssid  && (sameMacPrefix(n.bssid, self5.bssid)  || sameMacPrefix4(n.bssid, self5.bssid)))  return false
+      if (self24?.bssid) {
+        if (sameMacPrefix(n.bssid, self24.bssid)) return false
+        if (sameMacPrefix4(n.bssid, self24.bssid) && Math.abs(n.signal - self24.signal) <= 15) return false
+      }
+      if (self5?.bssid) {
+        if (sameMacPrefix(n.bssid, self5.bssid)) return false
+        if (sameMacPrefix4(n.bssid, self5.bssid) && Math.abs(n.signal - self5.signal) <= 15) return false
       }
       return true
     }),
