@@ -31,7 +31,6 @@
  */
 
 const http = require('http')
-const net  = require('http')
 const tcp  = require('net')
 const dns  = require('dns/promises')
 const os   = require('os')
@@ -393,22 +392,22 @@ async function discoverDevices(subnet) {
     if (ip.startsWith(subnet)) found.set(ip, mac ?? found.get(ip) ?? null)
   }
 
-  const devices = []
-  for (const [ip, mac] of found) {
-    const latency = await icmpPing(ip)
-    const openPorts = []
-    for (const port of SCAN_PORTS) {
-      if (await probePort(ip, port, 600)) openPorts.push(port)
-    }
-    devices.push({ ip, mac: mac ?? null, vendor: null, hostname: null, openPorts, alive: latency >= 0 })
-  }
+  const devices = await Promise.all(
+    [...found].map(async ([ip, mac]) => {
+      const [latency, ...portResults] = await Promise.all([
+        icmpPing(ip),
+        ...SCAN_PORTS.map(port => probePort(ip, port, 600)),
+      ])
+      const openPorts = SCAN_PORTS.filter((_, i) => portResults[i])
+      return { ip, mac: mac ?? null, vendor: null, hostname: null, openPorts, alive: latency >= 0 }
+    })
+  )
 
   return devices
     .filter(d => d.alive)
     .sort((a, b) => {
-      const [, la] = a.ip.split('.').map(Number)
-      const [, lb] = b.ip.split('.').map(Number)
-      return la - lb
+      const last = ip => parseInt(ip.split('.')[3], 10)
+      return last(a.ip) - last(b.ip)
     })
 }
 
@@ -423,7 +422,7 @@ function handleOptions(req, res) {
 
 // ── Net Agent server (port 3777) ──────────────────────────────────────────────
 
-const netServer = require('http').createServer(async (req, res) => {
+const netServer = http.createServer(async (req, res) => {
   if (handleOptions(req, res)) return
 
   const url    = new URL(req.url, `http://localhost:${NET_PORT}`)
@@ -501,7 +500,7 @@ const netServer = require('http').createServer(async (req, res) => {
 
 // ── WiFi Agent server (port 7474) ─────────────────────────────────────────────
 
-const wifiServer = require('http').createServer(async (req, res) => {
+const wifiServer = http.createServer(async (req, res) => {
   if (handleOptions(req, res)) return
 
   const url    = new URL(req.url, `http://localhost:${WIFI_PORT}`)
