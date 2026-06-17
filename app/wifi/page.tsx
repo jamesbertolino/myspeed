@@ -349,9 +349,10 @@ export default function WiFiPage() {
   const myChannel5  = self5?.channel ?? null
 
   // Lista usada em todo cálculo de interferência/canal — exclui a própria rede.
-  // Exclui QUALQUER rede (nomeada ou hidden) cujo MAC prefix coincide com self24/self5.
-  // Isso cobre APs multi-SSID: ex. MYCOMP + LABORATORIO no mesmo hardware — ambos
-  // são o próprio roteador e nenhum deve contar como interferência no próprio canal.
+  // Exclui QUALQUER rede (nomeada ou hidden) do mesmo AP físico que self24/self5:
+  //   1. MAC prefix 5 bytes (exato) — mesmo hardware, qualquer configuração
+  //   2. MAC prefix 4 bytes + sinal ±15dBm — APs que variam o 5° byte por radio
+  //   3. Fallback sem BSSID: mesmo canal + sinal ±3dBm → mesmo AP (ex: MYCOMP + LABORATORIO)
   const competitorNetworks = useMemo(
     () => cleanNetworks.filter(n => {
       if (n === self24 || n === self5) return false
@@ -363,6 +364,9 @@ export default function WiFiPage() {
         if (sameMacPrefix(n.bssid, self5.bssid)) return false
         if (sameMacPrefix4(n.bssid, self5.bssid) && Math.abs(n.signal - self5.signal) <= 15) return false
       }
+      // Fallback: sem BSSID disponível, mesmo canal + sinal idêntico = mesmo AP físico
+      if (self24 && n.band === '2.4' && n.channel === self24.channel && Math.abs(n.signal - self24.signal) <= 3) return false
+      if (self5  && n.band === '5'   && n.channel === self5.channel  && Math.abs(n.signal - self5.signal)  <= 3) return false
       return true
     }),
     [cleanNetworks, self24, self5]
@@ -403,9 +407,9 @@ export default function WiFiPage() {
     }))
   }
 
-  // Get channel interference score
+  // Get channel interference score — aplica o mesmo noise floor do channelPenalty
   const getInterference = (ch: number): 'none' | 'low' | 'medium' | 'high' => {
-    const others = competitorNetworks.filter(n => n.band === band)
+    const others = competitorNetworks.filter(n => n.band === band && n.signal >= NOISE_FLOOR_DBM)
     const nearby = others.filter(n => Math.abs(n.channel - ch) < (band === '2.4' ? 5 : 4))
     if (nearby.length === 0) return 'none'
     if (nearby.length === 1) return 'low'

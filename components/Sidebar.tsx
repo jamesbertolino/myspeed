@@ -10,6 +10,14 @@ import clsx from 'clsx'
 
 const CHANGELOG: { version: string; date: string; items: string[] }[] = [
   {
+    version: 'v3.0.7',
+    date: '2026-06-17',
+    items: [
+      'getInterference aplica noise floor -90dBm (corrige "Alta interferência" em canais livres)',
+      'Fallback por canal+sinal ±3dBm exclui multi-SSID mesmo sem BSSID disponível',
+    ],
+  },
+  {
     version: 'v3.0.6',
     date: '2026-06-17',
     items: [
@@ -475,7 +483,7 @@ function SidebarStatus() {
             onClick={() => setShowChangelog(true)}
             className="flex items-center gap-0.5 text-gray-400 hover:text-cyan-400 transition-colors group"
           >
-            v3.0.6
+            v3.0.7
             <ChevronDown className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
           </button>
         </div>
