@@ -62,7 +62,17 @@ jobs:
 
       - name: Build debug APK
         working-directory: android-monitor
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/gradle.log
+          EXIT=${PIPESTATUS[0]}
+          if [ $EXIT -ne 0 ]; then
+            echo ""
+            echo "========== GRADLE ERROR SUMMARY =========="
+            grep -E "^(FAILURE|> |Caused by:|Execution failed|error:|e:)" /tmp/gradle.log | head -40
+            echo "=========================================="
+            exit $EXIT
+          fi
 
       - name: Locate debug APK
         id: apk
