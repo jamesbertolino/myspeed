@@ -4,9 +4,98 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { loadSettings } from '@/lib/settings'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart3, Gauge, Activity, Wifi, Server, Zap, Radio, Settings, Menu, X, Monitor, Shield, LogOut, History } from 'lucide-react'
+import { BarChart3, Gauge, Activity, Wifi, Server, Zap, Radio, Settings, Menu, X, Monitor, Shield, LogOut, History, ChevronDown } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
+
+const CHANGELOG: { version: string; date: string; items: string[] }[] = [
+  {
+    version: 'v3.0.2',
+    date: '2026-06-17',
+    items: [
+      'Versão clicável no sidebar abre este changelog',
+      'Sincronização com branch mobile — layout responsivo revisado',
+    ],
+  },
+  {
+    version: 'v3.0.1',
+    date: '2026-06-15',
+    items: [
+      'Detecção de ghost networks por prefixo MAC em qualquer canal (não só mesmo canal)',
+      'Noise floor -82 dBm: sinais abaixo descartados no cálculo de interferência',
+      'Prompt de IA reestruturado com contexto rico: AP próprio, ghosts com motivo, concorrentes por canal',
+      'Traceroute com precisão decimal via TCP probe (performance.now())',
+    ],
+  },
+  {
+    version: 'v3.0.0',
+    date: '2026-06-10',
+    items: [
+      'Algoritmo de canal max-penalty com histerese 15% (evita oscilação)',
+      'Auto-exclusão da própria rede no cálculo de interferência (self-penalty bug)',
+      'Redes hidden identificadas como mesmo AP (MAC prefix 5 bytes) excluídas dos scores',
+      'Tag "Provável mesmo AP" na lista de redes para hidden do próprio roteador',
+      'Painel canal atual vs recomendado com scores de interferência',
+      'Botão "Tempo Real" para re-scan automático a cada 5s',
+      'Botão "Analisar IA" separado — análise não roda mais no auto-scan',
+    ],
+  },
+  {
+    version: 'v2.8.0',
+    date: '2026-06-05',
+    items: [
+      'Alertas via webhook (Discord, Slack ou URL genérica) com relay server-side',
+      'Modal de detalhes de dispositivo com ping ao vivo e gráfico de latência',
+      'Correção do crash do Recharts (yAxisId invariant) na página de histórico',
+    ],
+  },
+]
+
+function ChangelogModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[200] flex items-end md:items-center justify-center">
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-sm md:max-w-md mx-4 mb-4 md:mb-0 bg-[#0d1629] border border-[#1a2744] rounded-2xl shadow-2xl overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#1a2744]">
+          <div>
+            <h2 className="text-white font-semibold text-sm">Histórico de Versões</h2>
+            <p className="text-gray-500 text-[11px] mt-0.5">MySpeed Network Analyzer</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 text-gray-500 hover:text-gray-300 rounded-lg hover:bg-white/5 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="overflow-y-auto max-h-[60vh] px-5 py-4 space-y-5">
+          {CHANGELOG.map((entry, i) => (
+            <div key={entry.version}>
+              <div className="flex items-center gap-2 mb-2">
+                <span className={clsx(
+                  'text-xs font-bold px-2 py-0.5 rounded-full',
+                  i === 0 ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' : 'bg-white/5 text-gray-400'
+                )}>
+                  {entry.version}
+                </span>
+                <span className="text-[11px] text-gray-600">{entry.date}</span>
+                {i === 0 && <span className="text-[10px] bg-green-500/20 text-green-400 border border-green-500/30 px-1.5 py-0.5 rounded-full">atual</span>}
+              </div>
+              <ul className="space-y-1">
+                {entry.items.map((item, j) => (
+                  <li key={j} className="flex items-start gap-2 text-[12px] text-gray-400">
+                    <span className="text-cyan-600 mt-0.5 shrink-0">•</span>
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 const nav = [
   { href: '/dashboard', icon: BarChart3, label: 'Dashboard' },
@@ -286,6 +375,7 @@ function MobileEcgBar() {
 function SidebarStatus() {
   const [latency, setLatency] = useState<number | null>(null)
   const [beat, setBeat] = useState(0)
+  const [showChangelog, setShowChangelog] = useState(false)
 
   const ping = useCallback(async () => {
     try {
@@ -347,9 +437,16 @@ function SidebarStatus() {
         </div>
         <div className="flex justify-between text-[11px]">
           <span className="text-gray-500">Versão</span>
-          <span className="text-gray-400">v3.0.1</span>
+          <button
+            onClick={() => setShowChangelog(true)}
+            className="flex items-center gap-0.5 text-gray-400 hover:text-cyan-400 transition-colors group"
+          >
+            v3.0.2
+            <ChevronDown className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+          </button>
         </div>
       </div>
+      {showChangelog && <ChangelogModal onClose={() => setShowChangelog(false)} />}
     </div>
   )
 }
