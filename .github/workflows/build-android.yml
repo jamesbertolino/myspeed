@@ -62,17 +62,34 @@ jobs:
 
       - name: Build debug APK
         working-directory: android-monitor
+        continue-on-error: true
         run: |
-          set -o pipefail
           ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/gradle.log
-          EXIT=${PIPESTATUS[0]}
-          if [ $EXIT -ne 0 ]; then
-            echo ""
-            echo "========== GRADLE ERROR SUMMARY =========="
-            grep -E "^(FAILURE|> |Caused by:|Execution failed|error:|e:)" /tmp/gradle.log | head -40
-            echo "=========================================="
-            exit $EXIT
-          fi
+          echo "GRADLE_EXIT=${PIPESTATUS[0]}" >> $GITHUB_ENV
+
+      - name: Show error summary
+        if: env.GRADLE_EXIT != '0'
+        run: |
+          echo "========== FIRST 80 LINES =========="
+          head -80 /tmp/gradle.log
+          echo ""
+          echo "========== WHAT WENT WRONG =========="
+          grep -A 15 "What went wrong\|Caused by:\|e: .*\.kt" /tmp/gradle.log || true
+          echo ""
+          echo "========== LAST 30 LINES =========="
+          tail -30 /tmp/gradle.log
+
+      - name: Upload build log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-build-log
+          path: /tmp/gradle.log
+          retention-days: 7
+
+      - name: Fail if build failed
+        if: env.GRADLE_EXIT != '0'
+        run: exit 1
 
       - name: Locate debug APK
         id: apk
