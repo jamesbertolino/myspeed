@@ -9,11 +9,6 @@ on:
       - 'android-monitor/**'
       - '.github/workflows/build-android.yml'
   workflow_dispatch:
-    inputs:
-      branch:
-        description: 'Branch to build from'
-        required: false
-        default: 'main'
 
 jobs:
   build:
@@ -31,6 +26,9 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Accept SDK licenses
+        run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -43,7 +41,6 @@ jobs:
       - name: Generate Gradle wrapper JAR
         working-directory: android-monitor
         run: |
-          # Bootstrap: use system gradle to generate proper wrapper jar
           GRADLE_VERSION=8.7
           GRADLE_URL="https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
           curl -sL "$GRADLE_URL" -o /tmp/gradle.zip
@@ -52,39 +49,35 @@ jobs:
           /tmp/gradle/gradle-${GRADLE_VERSION}/bin/gradle wrapper --gradle-version ${GRADLE_VERSION}
           chmod +x gradlew
 
-      - name: Build release APK
-        working-directory: android-monitor
-        run: ./gradlew assembleRelease --no-daemon --stacktrace
+      - name: Diagnose environment
+        run: |
+          echo "=== Java version ===" && java -version
+          echo "=== Android SDK ===" && ls $ANDROID_HOME/platforms/ || true
+          echo "=== Build tools ===" && ls $ANDROID_HOME/build-tools/ || true
 
-      - name: Locate and sign APK
+      - name: Build debug APK
+        working-directory: android-monitor
+        run: ./gradlew assembleDebug --no-daemon --info 2>&1 | grep -E "(FAILED|error:|Error|Exception|BUILD)" | head -50 || ./gradlew assembleDebug --no-daemon
+
+      - name: Locate debug APK
+        id: apk
         working-directory: android-monitor
         run: |
-          # Find the unsigned APK (name varies with AGP version)
-          APK_IN=$(find app/build/outputs/apk/release -name "*.apk" ! -name "*signed*" | head -1)
-          if [ -z "$APK_IN" ]; then
-            echo "ERROR: No APK found in app/build/outputs/apk/release/"
-            find app/build/outputs/ -name "*.apk" || true
+          APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -1)
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK not found, listing build outputs:"
+            find app/build/outputs/ 2>/dev/null || echo "(no outputs)"
             exit 1
           fi
-          echo "Found APK: $APK_IN"
-
-          keytool -genkey -v -keystore debug.keystore -alias androiddebugkey \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US" \
-            -storepass android -keypass android
-
-          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name "apksigner" | sort -V | tail -1)
-          "$APKSIGNER" sign \
-            --ks debug.keystore --ks-key-alias androiddebugkey \
-            --ks-pass pass:android --key-pass pass:android \
-            --out app/build/outputs/apk/release/MySpeedMonitor-signed.apk \
-            "$APK_IN"
+          echo "Found: $APK"
+          cp "$APK" app/build/outputs/apk/debug/MySpeedMonitor-debug.apk
+          echo "path=android-monitor/app/build/outputs/apk/debug/MySpeedMonitor-debug.apk" >> $GITHUB_OUTPUT
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: MySpeedMonitor-APK
-          path: android-monitor/app/build/outputs/apk/release/MySpeedMonitor-signed.apk
+          path: ${{ steps.apk.outputs.path }}
           retention-days: 30
 
       - name: Create GitHub Release on main
@@ -96,11 +89,13 @@ jobs:
           body: |
             Automated Android APK build from commit ${{ github.sha }}.
 
+            > **Debug build** — enable *Install from unknown sources* to install.
+
             **Install:**
-            1. Download `MySpeedMonitor-signed.apk`
-            2. Enable *Install from unknown sources* on your Android device
+            1. Download `MySpeedMonitor-debug.apk`
+            2. Enable *Settings → Security → Install unknown apps*
             3. Open the APK to install
             4. Enter your MySpeed server URL and enable monitoring
-          files: android-monitor/app/build/outputs/apk/release/MySpeedMonitor-signed.apk
+          files: ${{ steps.apk.outputs.path }}
           draft: false
           prerelease: false
