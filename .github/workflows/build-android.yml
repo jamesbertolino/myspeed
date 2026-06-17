@@ -54,22 +54,31 @@ jobs:
 
       - name: Build release APK
         working-directory: android-monitor
-        run: ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tail -100
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
 
-      - name: Sign APK (debug keystore for distribution)
+      - name: Locate and sign APK
         working-directory: android-monitor
         run: |
+          # Find the unsigned APK (name varies with AGP version)
+          APK_IN=$(find app/build/outputs/apk/release -name "*.apk" ! -name "*signed*" | head -1)
+          if [ -z "$APK_IN" ]; then
+            echo "ERROR: No APK found in app/build/outputs/apk/release/"
+            find app/build/outputs/ -name "*.apk" || true
+            exit 1
+          fi
+          echo "Found APK: $APK_IN"
+
           keytool -genkey -v -keystore debug.keystore -alias androiddebugkey \
             -keyalg RSA -keysize 2048 -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US" \
             -storepass android -keypass android
-          # Find apksigner regardless of exact build-tools version
+
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name "apksigner" | sort -V | tail -1)
           "$APKSIGNER" sign \
             --ks debug.keystore --ks-key-alias androiddebugkey \
             --ks-pass pass:android --key-pass pass:android \
             --out app/build/outputs/apk/release/MySpeedMonitor-signed.apk \
-            app/build/outputs/apk/release/app-release-unsigned.apk
+            "$APK_IN"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
