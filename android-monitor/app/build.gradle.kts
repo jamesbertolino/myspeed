@@ -5,12 +5,12 @@ plugins {
 
 android {
     namespace   = "com.myspeed.monitor"
-    compileSdk  = 35
+    compileSdk  = 34
 
     defaultConfig {
         applicationId  = "com.myspeed.monitor"
-        minSdk         = 26
-        targetSdk      = 35
+        minSdk         = 24
+        targetSdk      = 34
         versionCode    = 1
         versionName    = "1.0.0"
     }

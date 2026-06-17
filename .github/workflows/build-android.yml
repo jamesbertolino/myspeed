@@ -26,13 +26,13 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install required SDK components
+      - name: Accept SDK licenses
+        run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses 2>/dev/null || true
+
+      - name: Show SDK state
         run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
-            "platforms;android-35" \
-            "build-tools;35.0.0" \
-            "platform-tools"
+          echo "Platforms:" && ls $ANDROID_HOME/platforms/ 2>/dev/null || echo "(none)"
+          echo "Build-tools:" && ls $ANDROID_HOME/build-tools/ 2>/dev/null || echo "(none)"
 
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -43,43 +43,23 @@ jobs:
           key: gradle-${{ hashFiles('android-monitor/**/*.gradle*', 'android-monitor/**/libs.versions.toml') }}
           restore-keys: gradle-
 
-      - name: Generate Gradle wrapper JAR
+      - name: Bootstrap Gradle wrapper
         working-directory: android-monitor
         run: |
-          GRADLE_VERSION=8.7
-          GRADLE_URL="https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
-          curl -sL "$GRADLE_URL" -o /tmp/gradle.zip
+          GRADLE_VERSION=8.4
+          curl -sL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -o /tmp/gradle.zip
           unzip -q /tmp/gradle.zip -d /tmp/gradle
-          chmod +x /tmp/gradle/gradle-${GRADLE_VERSION}/bin/gradle
-          /tmp/gradle/gradle-${GRADLE_VERSION}/bin/gradle wrapper --gradle-version ${GRADLE_VERSION}
+          /tmp/gradle/gradle-${GRADLE_VERSION}/bin/gradle wrapper --gradle-version ${GRADLE_VERSION} --no-daemon
           chmod +x gradlew
-
-      - name: Diagnose environment
-        run: |
-          echo "=== Java version ===" && java -version
-          echo "=== Android SDK ===" && ls $ANDROID_HOME/platforms/ || true
-          echo "=== Build tools ===" && ls $ANDROID_HOME/build-tools/ || true
 
       - name: Build debug APK
         working-directory: android-monitor
         continue-on-error: true
         run: |
           ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/gradle.log
-          echo "GRADLE_EXIT=${PIPESTATUS[0]}" >> $GITHUB_ENV
+          echo "BUILD_EXIT=${PIPESTATUS[0]}" >> $GITHUB_ENV
 
-      - name: Show error summary
-        if: env.GRADLE_EXIT != '0'
-        run: |
-          echo "========== FIRST 80 LINES =========="
-          head -80 /tmp/gradle.log
-          echo ""
-          echo "========== WHAT WENT WRONG =========="
-          grep -A 15 "What went wrong\|Caused by:\|e: .*\.kt" /tmp/gradle.log || true
-          echo ""
-          echo "========== LAST 30 LINES =========="
-          tail -30 /tmp/gradle.log
-
-      - name: Upload build log (always)
+      - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -87,47 +67,32 @@ jobs:
           path: /tmp/gradle.log
           retention-days: 7
 
-      - name: Fail if build failed
-        if: env.GRADLE_EXIT != '0'
-        run: exit 1
-
-      - name: Locate debug APK
-        id: apk
-        working-directory: android-monitor
+      - name: Print error if failed
+        if: env.BUILD_EXIT != '0'
         run: |
-          APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -1)
-          if [ -z "$APK" ]; then
-            echo "ERROR: APK not found, listing build outputs:"
-            find app/build/outputs/ 2>/dev/null || echo "(no outputs)"
-            exit 1
-          fi
-          echo "Found: $APK"
-          cp "$APK" app/build/outputs/apk/debug/MySpeedMonitor-debug.apk
-          echo "path=android-monitor/app/build/outputs/apk/debug/MySpeedMonitor-debug.apk" >> $GITHUB_OUTPUT
+          echo "=== FIRST 100 LINES ==="
+          head -100 /tmp/gradle.log
+          echo "=== WHAT WENT WRONG ==="
+          grep -A 20 "What went wrong" /tmp/gradle.log || true
+          exit 1
 
-      - name: Upload APK artifact
+      - name: Upload APK
+        if: env.BUILD_EXIT == '0'
         uses: actions/upload-artifact@v4
         with:
           name: MySpeedMonitor-APK
-          path: ${{ steps.apk.outputs.path }}
+          path: android-monitor/app/build/outputs/apk/debug/*.apk
           retention-days: 30
 
-      - name: Create GitHub Release on main
-        if: github.ref == 'refs/heads/main'
+      - name: Create GitHub Release
+        if: env.BUILD_EXIT == '0' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: android-v${{ github.run_number }}
           name: MySpeed Monitor APK (build ${{ github.run_number }})
           body: |
-            Automated Android APK build from commit ${{ github.sha }}.
-
-            > **Debug build** — enable *Install from unknown sources* to install.
-
-            **Install:**
-            1. Download `MySpeedMonitor-debug.apk`
-            2. Enable *Settings → Security → Install unknown apps*
-            3. Open the APK to install
-            4. Enter your MySpeed server URL and enable monitoring
-          files: ${{ steps.apk.outputs.path }}
+            Android APK — build ${{ github.run_number }} from ${{ github.sha }}.
+            Enable *Install from unknown sources* to install.
+          files: android-monitor/app/build/outputs/apk/debug/*.apk
           draft: false
           prerelease: false
