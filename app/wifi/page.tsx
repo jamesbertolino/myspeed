@@ -357,7 +357,7 @@ export default function WiFiPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [competitorNetworks])
 
-  const currentBandNets = networks.filter(n => n.band === band)
+  const currentBandNets = networks.filter(n => n.band === band).sort((a, b) => b.signal - a.signal)
   const recommended = band === '2.4' ? recommended24 : recommended5
 
   const handleExportPdf = async () => {
