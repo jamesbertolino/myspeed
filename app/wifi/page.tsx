@@ -91,9 +91,10 @@ function stripGhostHidden(networks: WiFiNetwork[]): WiFiNetwork[] {
   })
 }
 
-// Limiar abaixo do qual o sinal é considerado ruído de fundo.
-// -82dBm: força bruta = 18/100 — na prática irrelevante para decisão de canal.
-const NOISE_FLOOR_DBM = -82
+// Limiar abaixo do qual o sinal é considerado ruído de fundo e ignorado no cálculo.
+// -90dBm: sinais nessa faixa têm força bruta ≤10/100 — interferência desprezível,
+// especialmente em 2.4GHz onde redes distantes aparecem com frequência nessa faixa.
+const NOISE_FLOOR_DBM = -90
 
 function channelPenalty(networks: WiFiNetwork[], band: '2.4' | '5', ch: number): number {
   const threshold = band === '2.4' ? 5 : 4
