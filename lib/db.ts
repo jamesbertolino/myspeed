@@ -8,6 +8,7 @@ const DB_PATH = path.join(DB_DIR, 'myspeed.db')
 if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true })
 
 const db = new Database(DB_PATH)
+db.pragma('busy_timeout = 5000')
 db.pragma('journal_mode = WAL')
 db.pragma('foreign_keys = ON')
 
