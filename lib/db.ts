@@ -2,10 +2,18 @@ import Database from 'better-sqlite3'
 import path from 'path'
 import fs from 'fs'
 
-const DB_DIR  = path.join(process.cwd(), '.data')
-const DB_PATH = path.join(DB_DIR, 'myspeed.db')
+function resolveDbPath(): string {
+  const preferred = path.join(process.cwd(), '.data')
+  try {
+    if (!fs.existsSync(preferred)) fs.mkdirSync(preferred, { recursive: true })
+    return path.join(preferred, 'myspeed.db')
+  } catch {
+    // Vercel and some hosts have a read-only project dir; fall back to /tmp
+    return path.join('/tmp', 'myspeed.db')
+  }
+}
 
-if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true })
+const DB_PATH = resolveDbPath()
 
 const db = new Database(DB_PATH)
 db.pragma('busy_timeout = 5000')
