@@ -515,7 +515,7 @@ export default function SpeedTestPage() {
 
           {/* Action Buttons */}
           {!isRunning ? (
-            <div className="flex gap-3">
+            <div className="flex gap-3 flex-wrap justify-center">
               <button
                 onClick={runTest}
                 disabled={!server}
@@ -555,7 +555,7 @@ export default function SpeedTestPage() {
                 <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">{label}</span>
               </div>
               <div className="flex items-end gap-1">
-                <span className="text-3xl font-black mono" style={{ color }}>{value.value}</span>
+                <span className="text-2xl md:text-3xl font-black mono" style={{ color }}>{value.value}</span>
                 <span className="text-sm text-gray-400 mb-1">{value.unit}</span>
               </div>
             </div>
