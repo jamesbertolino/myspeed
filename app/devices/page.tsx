@@ -5,7 +5,7 @@ import {
   Monitor, ScanLine, Shield, ShieldAlert, ShieldX, ShieldCheck,
   Sparkles, RefreshCw, Terminal, Wifi, ChevronDown, ChevronUp,
   Server, Cpu, AlertTriangle, CheckCircle, Clock, Network, Router, FileDown,
-  Bell, BellOff, X,
+  Bell, BellOff, X, Activity,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { lookupVendor, guessDeviceType } from '@/lib/oui'
@@ -476,6 +476,76 @@ export default function DevicesPage() {
 
   useEffect(() => { loadKnown() }, [])
 
+  // Comparação de scans
+  interface ScanDiff {
+    newDevices: Device[]
+    disappeared: { ip: string; mac: string | null; vendor: string | null }[]
+    riskIncreased: { current: Device; prevRisk: string }[]
+    newPorts: { device: Device; ports: string[] }[]
+    prevTs: number
+  }
+  const [scanDiff, setScanDiff] = useState<ScanDiff | null>(null)
+  const [showDiff, setShowDiff] = useState(false)
+  const prevSnapshotRef = useRef<{ ts: number; devices: Device[] } | null>(null)
+
+  // Load previous snapshot on mount
+  useEffect(() => {
+    fetch('/api/devices/snapshots?limit=1')
+      .then(r => r.json())
+      .then(d => {
+        const row = d.rows?.[0]
+        if (row) {
+          try { prevSnapshotRef.current = { ts: row.ts, devices: JSON.parse(row.devices_json) } } catch { /* */ }
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  // After scan completes: save snapshot + compute diff
+  useEffect(() => {
+    if (elapsed === null || devices.length === 0) return
+    const prev = prevSnapshotRef.current
+
+    // Compute diff
+    if (prev) {
+      const prevIps  = new Set(prev.devices.map((d: Device) => d.ip))
+      const currIps  = new Set(devices.map(d => d.ip))
+      const newDevs  = devices.filter(d => !prevIps.has(d.ip))
+      const gone     = prev.devices.filter((d: Device) => !currIps.has(d.ip)).map((d: Device) => ({ ip: d.ip, mac: d.mac, vendor: d.vendor }))
+      const riskOrder: Record<string, number> = { none: 0, low: 1, medium: 2, high: 3, critical: 4 }
+      const riskUp   = devices.filter(d => {
+        const prevD = prev.devices.find((p: Device) => p.ip === d.ip)
+        return prevD && riskOrder[d.riskLevel] > riskOrder[prevD.riskLevel]
+      }).map(d => ({ current: d, prevRisk: prev.devices.find((p: Device) => p.ip === d.ip)!.riskLevel }))
+      const newPortsArr = devices.filter(d => {
+        const prevD = prev.devices.find((p: Device) => p.ip === d.ip)
+        if (!prevD) return false
+        const prevPorts = new Set(prevD.openPorts.map((p: { port: number }) => p.port))
+        return d.openPorts.some(p => !prevPorts.has(p.port))
+      }).map(d => {
+        const prevD = prev.devices.find((p: Device) => p.ip === d.ip)!
+        const prevPorts = new Set(prevD.openPorts.map((p: { port: number }) => p.port))
+        return { device: d, ports: d.openPorts.filter(p => !prevPorts.has(p.port)).map(p => `${p.port}/${p.service}`) }
+      })
+      if (newDevs.length > 0 || gone.length > 0 || riskUp.length > 0 || newPortsArr.length > 0) {
+        setScanDiff({ newDevices: newDevs, disappeared: gone, riskIncreased: riskUp, newPorts: newPortsArr, prevTs: prev.ts })
+        setShowDiff(true)
+      } else {
+        setScanDiff(null)
+      }
+    }
+
+    // Save new snapshot
+    fetch('/api/devices/snapshots', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subnet: selectedSubnet, devices }),
+    }).then(async r => {
+      if (r.ok) prevSnapshotRef.current = { ts: Date.now(), devices }
+    }).catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [elapsed])
+
   // Load available network interfaces — prefer agent (local machine) over server API
   useEffect(() => {
     const load = (url: string) =>
@@ -577,6 +647,7 @@ export default function DevicesPage() {
         setElapsed(event.elapsed as number)
         setScanPhase('idle')
         setCurrentIp(null)
+        // save snapshot after scan completes (devices state updated via closure workaround below)
         break
     }
   }, [])
@@ -1158,6 +1229,56 @@ export default function DevicesPage() {
               ))}
             </div>
           </div>
+
+          {/* Comparação com scan anterior */}
+          {showDiff && scanDiff && (
+            <div className="card p-5 border-cyan-500/20 bg-cyan-500/5 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-cyan-300 flex items-center gap-2">
+                  <Activity className="w-4 h-4" />
+                  Comparação com scan anterior ({new Date(scanDiff.prevTs).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })})
+                </h3>
+                <button onClick={() => setShowDiff(false)} className="text-gray-500 hover:text-gray-300"><X className="w-4 h-4" /></button>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  { label: 'Novos', count: scanDiff.newDevices.length, color: '#ff4d4d' },
+                  { label: 'Sumidos', count: scanDiff.disappeared.length, color: '#ffd700' },
+                  { label: 'Risco subiu', count: scanDiff.riskIncreased.length, color: '#ff8c00' },
+                  { label: 'Portas novas', count: scanDiff.newPorts.length, color: '#00d4ff' },
+                ].map(s => (
+                  <div key={s.label} className="text-center">
+                    <p className="text-2xl font-black mono" style={{ color: s.count > 0 ? s.color : '#4a5568' }}>{s.count}</p>
+                    <p className="text-xs text-gray-500">{s.label}</p>
+                  </div>
+                ))}
+              </div>
+              {scanDiff.newDevices.length > 0 && (
+                <div>
+                  <p className="text-xs text-red-400 font-semibold mb-1">Novos dispositivos</p>
+                  <div className="flex flex-wrap gap-1">{scanDiff.newDevices.map(d => <span key={d.ip} className="tag tag-red text-[10px] font-mono">{d.ip}{d.vendor ? ` · ${d.vendor}` : ''}</span>)}</div>
+                </div>
+              )}
+              {scanDiff.disappeared.length > 0 && (
+                <div>
+                  <p className="text-xs text-yellow-400 font-semibold mb-1">Saíram da rede</p>
+                  <div className="flex flex-wrap gap-1">{scanDiff.disappeared.map(d => <span key={d.ip} className="tag tag-yellow text-[10px] font-mono">{d.ip}</span>)}</div>
+                </div>
+              )}
+              {scanDiff.riskIncreased.length > 0 && (
+                <div>
+                  <p className="text-xs text-orange-400 font-semibold mb-1">Risco aumentou</p>
+                  <div className="flex flex-wrap gap-1">{scanDiff.riskIncreased.map(r => <span key={r.current.ip} className="tag text-[10px] font-mono" style={{ color: '#ff8c00', background: '#ff8c0015', border: '1px solid #ff8c0030' }}>{r.current.ip}: {r.prevRisk} → {r.current.riskLevel}</span>)}</div>
+                </div>
+              )}
+              {scanDiff.newPorts.length > 0 && (
+                <div>
+                  <p className="text-xs text-cyan-400 font-semibold mb-1">Novas portas abertas</p>
+                  <div className="flex flex-wrap gap-1">{scanDiff.newPorts.map(r => <span key={r.device.ip} className="tag tag-cyan text-[10px] font-mono">{r.device.ip}: {r.ports.join(', ')}</span>)}</div>
+                </div>
+              )}
+            </div>
+          )}
 
           {filteredDevices.length === 0 ? (
             <div className="card text-center py-8 text-sm text-gray-500">

@@ -300,7 +300,26 @@ function analyzeResults(result: ScanResult) {
 }
 
 export default function NetworkPage() {
-  const [tab, setTab] = useState<'ping' | 'traceroute' | 'dns' | 'scanner' | 'security' | 'benchmark' | 'whois'>('ping')
+  const [tab, setTab] = useState<'ping' | 'traceroute' | 'dns' | 'dns-leak' | 'scanner' | 'security' | 'benchmark' | 'whois'>('ping')
+
+  // DNS Leak state
+  const [leakResult, setLeakResult] = useState<{
+    domain: string; systemServers: string[]; systemName: string; systemAddrs: string[]
+    systemIsPublic: boolean; hijackSuspect: boolean; leakRisk: boolean
+    resolvers: { name: string; ip: string; addrs: string[]; ok: boolean }[]
+  } | null>(null)
+  const [leakLoading, setLeakLoading] = useState(false)
+  const [leakDomain, setLeakDomain] = useState('example.com')
+
+  const runLeakTest = async () => {
+    setLeakLoading(true)
+    setLeakResult(null)
+    try {
+      const res = await fetch(`/api/dns-leak?domain=${encodeURIComponent(leakDomain)}`)
+      setLeakResult(await res.json())
+    } catch { /* ignore */ }
+    setLeakLoading(false)
+  }
 
   // Local agent detection
   const AGENT_URL = 'http://localhost:3777'
@@ -781,6 +800,7 @@ export default function NetworkPage() {
           { id: 'ping',       icon: Activity,    label: 'Ping' },
           { id: 'traceroute', icon: Network,      label: 'Traceroute' },
           { id: 'dns',        icon: Globe,        label: 'DNS' },
+          { id: 'dns-leak',   icon: Shield,       label: 'DNS Leak' },
           { id: 'benchmark',  icon: Zap,          label: 'DNS Benchmark' },
           { id: 'whois',      icon: FileSearch,   label: 'WHOIS' },
           { id: 'scanner',    icon: Radar,        label: 'Scanner' },
@@ -1310,6 +1330,95 @@ export default function NetworkPage() {
                 </div>
               )}
             </div>
+          )}
+        </div>
+      )}
+
+      {/* DNS LEAK TAB */}
+      {tab === 'dns-leak' && (
+        <div className="space-y-4">
+          <div className="card p-5">
+            <h2 className="text-sm font-semibold text-white mb-1">Teste de Vazamento DNS</h2>
+            <p className="text-xs text-gray-500 mb-4">
+              Verifica se seu DNS está sendo roteado pelo ISP ou por um resolvedor público, e detecta possível hijacking de DNS.
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={leakDomain}
+                onChange={e => setLeakDomain(e.target.value)}
+                placeholder="ex: example.com"
+                className="input-field flex-1 text-sm"
+              />
+              <button onClick={runLeakTest} disabled={leakLoading}
+                className="btn-cyan px-5 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 disabled:opacity-50 shrink-0">
+                {leakLoading ? <><Loader2 className="w-4 h-4 animate-spin" />Testando...</> : <><Search className="w-4 h-4" />Testar</>}
+              </button>
+            </div>
+          </div>
+
+          {leakResult && (
+            <>
+              {/* Status cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className={clsx('card p-4', leakResult.leakRisk ? 'border-orange-500/30' : 'border-green-500/20')}>
+                  <p className="text-xs text-gray-500 mb-1">Servidor DNS em uso</p>
+                  <p className="text-sm font-bold" style={{ color: leakResult.systemIsPublic ? '#00ff88' : '#ffd700' }}>
+                    {leakResult.systemName}
+                  </p>
+                  <p className="text-xs text-gray-600 font-mono mt-1">{leakResult.systemServers.join(', ')}</p>
+                </div>
+                <div className={clsx('card p-4', leakResult.leakRisk ? 'border-orange-500/30 bg-orange-500/5' : 'border-green-500/20')}>
+                  <p className="text-xs text-gray-500 mb-1">Risco de Vazamento</p>
+                  <p className="text-sm font-bold" style={{ color: leakResult.leakRisk ? '#ff8c00' : '#00ff88' }}>
+                    {leakResult.leakRisk ? 'Possível vazamento' : 'Sem vazamento'}
+                  </p>
+                  <p className="text-xs text-gray-600 mt-1">
+                    {leakResult.leakRisk ? 'DNS via ISP — privacidade reduzida' : 'DNS via resolvedor público'}
+                  </p>
+                </div>
+                <div className={clsx('card p-4', leakResult.hijackSuspect ? 'border-red-500/30 bg-red-500/5' : 'border-green-500/20')}>
+                  <p className="text-xs text-gray-500 mb-1">Hijacking DNS</p>
+                  <p className="text-sm font-bold" style={{ color: leakResult.hijackSuspect ? '#ff4d4d' : '#00ff88' }}>
+                    {leakResult.hijackSuspect ? 'Suspeito!' : 'Não detectado'}
+                  </p>
+                  <p className="text-xs text-gray-600 mt-1">
+                    {leakResult.hijackSuspect ? 'Resposta difere dos resolvedores públicos' : 'Respostas consistentes'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Resolver comparison */}
+              <div className="card p-5">
+                <h2 className="text-sm font-semibold text-white mb-4">Comparação de resolvedores — <span className="font-mono text-cyan-400">{leakResult.domain}</span></h2>
+                <div className="space-y-2">
+                  {/* System */}
+                  <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-white/5">
+                    <div className="w-20 text-xs font-semibold text-white shrink-0">Sistema</div>
+                    <div className="text-xs text-gray-400 mono shrink-0">{leakResult.systemServers[0] ?? '—'}</div>
+                    <div className="flex gap-1 flex-wrap flex-1">
+                      {leakResult.systemAddrs.map(a => (
+                        <span key={a} className="tag tag-cyan text-[10px] font-mono">{a}</span>
+                      ))}
+                      {leakResult.systemAddrs.length === 0 && <span className="text-gray-600 text-xs">sem resposta</span>}
+                    </div>
+                  </div>
+                  {leakResult.resolvers.map(r => (
+                    <div key={r.ip} className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-white/3">
+                      <div className="w-20 text-xs text-gray-400 shrink-0">{r.name}</div>
+                      <div className="text-xs text-gray-600 mono shrink-0">{r.ip}</div>
+                      <div className="flex gap-1 flex-wrap flex-1">
+                        {r.addrs.map(a => (
+                          <span key={a} className={clsx('tag text-[10px] font-mono', leakResult.systemAddrs.includes(a) ? 'tag-green' : 'tag-yellow')}>{a}</span>
+                        ))}
+                        {!r.ok && <span className="text-gray-600 text-xs">timeout</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-600 mt-3">Verde = IP coincide com sistema · Amarelo = IP diferente (pode indicar CDN ou hijacking)</p>
+              </div>
+            </>
           )}
         </div>
       )}

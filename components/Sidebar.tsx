@@ -4,11 +4,21 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { loadSettings } from '@/lib/settings'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart3, Gauge, Activity, Wifi, Server, Zap, Radio, Settings, Menu, X, Monitor, Shield, LogOut, History, Smartphone, ChevronDown } from 'lucide-react'
+import { BarChart3, Gauge, Activity, Wifi, Server, Zap, Radio, Settings, Menu, X, Monitor, Shield, LogOut, History, Smartphone, ChevronDown, Bell, AlertTriangle, Network } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
 
 const CHANGELOG: { version: string; date: string; items: string[] }[] = [
+  {
+    version: 'v3.5.0',
+    date: '2026-06-18',
+    items: [
+      'Comparativo de Scans: detecta dispositivos novos, desaparecidos, aumento de risco e novas portas entre scans',
+      'DNS Leak: testa se o DNS local vaza para resolvers do ISP vs Cloudflare, Google, OpenDNS e Quad9',
+      'Notificacoes: sino na sidebar com badge de nao-lidas, merge de alertas e novos dispositivos',
+      'Relatorio PDF: pagina /report imprimivel com resumo, insights, historico de velocidade, dispositivos e alertas',
+    ],
+  },
   {
     version: 'v3.4.0',
     date: '2026-06-18',
@@ -473,6 +483,103 @@ function MobileEcgBar() {
   )
 }
 
+const NOTIF_LS_KEY = 'myspeed_notif_seen_ts'
+
+function NotificationBell() {
+  const [open, setOpen] = useState(false)
+  const [notifications, setNotifications] = useState<{ ts: number; kind: 'alert' | 'device'; title: string; message: string }[]>([])
+  const [seenTs, setSeenTs] = useState(0)
+  const [unread, setUnread] = useState(0)
+
+  useEffect(() => {
+    try { setSeenTs(Number(localStorage.getItem(NOTIF_LS_KEY) ?? 0)) } catch { /* */ }
+  }, [])
+
+  const load = useCallback(() => {
+    fetch('/api/notifications?limit=20')
+      .then(r => r.json())
+      .then(d => {
+        const notifs = d.notifications ?? []
+        setNotifications(notifs)
+        const seen = Number(localStorage.getItem(NOTIF_LS_KEY) ?? 0)
+        setUnread(notifs.filter((n: { ts: number }) => n.ts > seen).length)
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    load()
+    const id = setInterval(load, 30_000)
+    return () => clearInterval(id)
+  }, [load])
+
+  function markRead() {
+    const now = Date.now()
+    localStorage.setItem(NOTIF_LS_KEY, String(now))
+    setSeenTs(now)
+    setUnread(0)
+    setOpen(true)
+  }
+
+  const kindColor = (kind: string) => kind === 'device' ? '#00d4ff' : '#ffd700'
+  const kindIcon  = (kind: string) => kind === 'device' ? Network : AlertTriangle
+
+  return (
+    <div className="relative">
+      <button
+        onClick={markRead}
+        className="relative p-1.5 text-gray-500 hover:text-gray-300 rounded-lg hover:bg-white/5 transition-colors"
+        title="Notificações"
+      >
+        <Bell className="w-4 h-4" />
+        {unread > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">
+            {unread > 9 ? '9+' : unread}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute bottom-8 left-0 z-50 w-72 bg-[#0b1527] border border-[#1a2744] rounded-xl shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a2744]">
+              <span className="text-xs font-semibold text-white">Notificações</span>
+              <button onClick={() => setOpen(false)} className="text-gray-500 hover:text-gray-300">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            {notifications.length === 0 ? (
+              <p className="text-center text-gray-600 text-xs py-6">Nenhuma notificação</p>
+            ) : (
+              <div className="max-h-72 overflow-y-auto divide-y divide-[#1a2744]">
+                {notifications.map((n, i) => {
+                  const Icon = kindIcon(n.kind)
+                  const color = kindColor(n.kind)
+                  const isNew = n.ts > seenTs
+                  return (
+                    <div key={i} className={clsx('flex items-start gap-2.5 px-4 py-3 transition-colors', isNew ? 'bg-white/[0.03]' : '')}>
+                      <Icon className="w-3.5 h-3.5 shrink-0 mt-0.5" style={{ color }} />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium text-gray-200">{n.title}</p>
+                        <p className="text-[11px] text-gray-500 truncate">{n.message}</p>
+                        <p className="text-[10px] text-gray-700 mt-0.5">
+                          {new Date(n.ts).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
+                      {isNew && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0 mt-1" />}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 function SidebarStatus() {
   const [latency, setLatency] = useState<number | null>(null)
   const [beat, setBeat] = useState(0)
@@ -538,13 +645,16 @@ function SidebarStatus() {
         </div>
         <div className="flex justify-between text-[11px]">
           <span className="text-gray-500">Versão</span>
-          <button
-            onClick={() => setShowChangelog(true)}
-            className="flex items-center gap-0.5 text-gray-400 hover:text-cyan-400 transition-colors group"
-          >
-            v3.4.0
-            <ChevronDown className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-          </button>
+          <div className="flex items-center gap-2">
+            <NotificationBell />
+            <button
+              onClick={() => setShowChangelog(true)}
+              className="flex items-center gap-0.5 text-gray-400 hover:text-cyan-400 transition-colors group"
+            >
+              v3.5.0
+              <ChevronDown className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+            </button>
+          </div>
         </div>
       </div>
       {showChangelog && <ChangelogModal onClose={() => setShowChangelog(false)} />}

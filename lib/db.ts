@@ -89,6 +89,16 @@ db.exec(`
     networks_json TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS device_scan_snapshots (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          INTEGER NOT NULL,
+    subnet      TEXT,
+    device_count INTEGER NOT NULL DEFAULT 0,
+    devices_json TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_snapshots_ts ON device_scan_snapshots(ts DESC);
+
   CREATE TABLE IF NOT EXISTS known_devices (
     mac        TEXT    PRIMARY KEY,
     label      TEXT,
