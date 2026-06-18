@@ -10,6 +10,16 @@ import clsx from 'clsx'
 
 const CHANGELOG: { version: string; date: string; items: string[] }[] = [
   {
+    version: 'v3.2.2',
+    date: '2026-06-18',
+    items: [
+      'Monitoramento contínuo de dispositivos: botão Monitorar na página de Dispositivos',
+      'Polling ARP a cada 30s via agente local detecta novos MACs na rede',
+      'Alerta vermelho com IP/MAC do dispositivo novo e botão "Marcar como confiável"',
+      'Webhook acionado automaticamente ao detectar dispositivo desconhecido',
+    ],
+  },
+  {
     version: 'v3.2.1',
     date: '2026-06-18',
     items: [
@@ -511,7 +521,7 @@ function SidebarStatus() {
             onClick={() => setShowChangelog(true)}
             className="flex items-center gap-0.5 text-gray-400 hover:text-cyan-400 transition-colors group"
           >
-            v3.2.1
+            v3.2.2
             <ChevronDown className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
           </button>
         </div>

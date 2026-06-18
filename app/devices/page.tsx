@@ -5,6 +5,7 @@ import {
   Monitor, ScanLine, Shield, ShieldAlert, ShieldX, ShieldCheck,
   Sparkles, RefreshCw, Terminal, Wifi, ChevronDown, ChevronUp,
   Server, Cpu, AlertTriangle, CheckCircle, Clock, Network, Router, FileDown,
+  Bell, BellOff, X,
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -453,6 +454,11 @@ export default function DevicesPage() {
   const [selectedSubnet, setSelectedSubnet] = useState<string>('')
   const abortRef = useRef<AbortController | null>(null)
 
+  // Monitoramento contínuo
+  const [monitoring, setMonitoring] = useState(false)
+  const [newDevices, setNewDevices] = useState<Array<{ mac: string; ip: string }>>([])
+  const monitorRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
   // Load available network interfaces — prefer agent (local machine) over server API
   useEffect(() => {
     const load = (url: string) =>
@@ -497,6 +503,36 @@ export default function DevicesPage() {
     const interval = setInterval(check, 8000)
     return () => { cancelled = true; clearInterval(interval) }
   }, [])
+
+  // Polling de monitoramento a cada 30s via /arp
+  useEffect(() => {
+    if (!monitoring || !agentReady) return
+    const poll = async () => {
+      try {
+        const subnet = selectedSubnet || undefined
+        const url = subnet
+          ? `http://localhost:${AGENT_PORT}/arp?subnet=${subnet}`
+          : `http://localhost:${AGENT_PORT}/arp`
+        const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+        if (!res.ok) return
+        const { hosts } = await res.json()
+        const mon = await fetch('/api/devices/monitor', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ hosts }),
+        })
+        if (!mon.ok) return
+        const { newDevices: nd } = await mon.json()
+        if (nd?.length) setNewDevices(prev => {
+          const existing = new Set(prev.map(d => d.mac))
+          return [...prev, ...nd.filter((d: { mac: string }) => !existing.has(d.mac))]
+        })
+      } catch { /* best-effort */ }
+    }
+    poll()
+    monitorRef.current = setInterval(poll, 30_000)
+    return () => { if (monitorRef.current) clearInterval(monitorRef.current) }
+  }, [monitoring, agentReady, selectedSubnet])
 
   const handleEvent = useCallback((event: Record<string, unknown>) => {
     switch (event.type) {
@@ -754,6 +790,21 @@ export default function DevicesPage() {
             </button>
           )}
           <button
+            onClick={() => setMonitoring(m => !m)}
+            disabled={!agentReady}
+            title={agentReady ? (monitoring ? 'Parar monitoramento' : 'Monitorar rede continuamente') : 'Agente local necessário'}
+            className={clsx(
+              'flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium border transition-all shrink-0',
+              monitoring
+                ? 'bg-orange-500/15 border-orange-500/40 text-orange-300 hover:bg-orange-500/25'
+                : agentReady
+                  ? 'border-[#1a2744] text-gray-300 hover:text-white hover:bg-white/5'
+                  : 'border-[#1a2744] text-gray-600 cursor-not-allowed opacity-50'
+            )}
+          >
+            {monitoring ? <><BellOff className="w-4 h-4" /> Parar</> : <><Bell className="w-4 h-4" /> Monitorar</>}
+          </button>
+          <button
             onClick={() => startScan()}
             disabled={scanning}
             className={clsx(
@@ -850,6 +901,65 @@ export default function DevicesPage() {
             </div>
           </div>
         )
+      )}
+
+      {/* Monitoramento ativo */}
+      {monitoring && (
+        <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-orange-500/10 border border-orange-500/20">
+          <div className="w-2 h-2 rounded-full bg-orange-400 shrink-0 animate-pulse" />
+          <p className="text-sm text-orange-300 flex-1">
+            Monitoramento ativo — verificando novos dispositivos a cada 30s
+          </p>
+          {newDevices.length > 0 && (
+            <span className="text-xs font-bold bg-red-500 text-white px-2 py-0.5 rounded-full">
+              {newDevices.length} novo{newDevices.length > 1 ? 's' : ''}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Alerta: novos dispositivos detectados */}
+      {newDevices.length > 0 && (
+        <div className="rounded-lg bg-red-500/10 border border-red-500/30 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-red-300 font-medium text-sm">
+              <AlertTriangle className="w-4 h-4" />
+              {newDevices.length === 1
+                ? 'Novo dispositivo detectado na rede!'
+                : `${newDevices.length} novos dispositivos detectados na rede!`}
+            </div>
+            <button
+              onClick={() => setNewDevices([])}
+              className="text-gray-500 hover:text-gray-300 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="space-y-2">
+            {newDevices.map(d => (
+              <div key={d.mac} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-red-500/5 border border-red-500/20">
+                <div className="flex items-center gap-3 text-sm">
+                  <Monitor className="w-4 h-4 text-red-400 shrink-0" />
+                  <span className="font-mono text-gray-200">{d.ip}</span>
+                  <span className="text-gray-500 font-mono text-xs">{d.mac}</span>
+                </div>
+                <button
+                  onClick={async () => {
+                    await fetch('/api/devices/known', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ mac: d.mac, trusted: 1 }),
+                    })
+                    setNewDevices(prev => prev.filter(x => x.mac !== d.mac))
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-500/15 border border-green-500/30 text-green-300 text-xs font-medium hover:bg-green-500/25 transition-all shrink-0"
+                >
+                  <CheckCircle className="w-3.5 h-3.5" /> Marcar como confiável
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* Progress */}

@@ -89,6 +89,16 @@ db.exec(`
     networks_json TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS known_devices (
+    mac        TEXT    PRIMARY KEY,
+    label      TEXT,
+    ip         TEXT,
+    vendor     TEXT,
+    first_seen INTEGER NOT NULL,
+    last_seen  INTEGER NOT NULL,
+    trusted    INTEGER NOT NULL DEFAULT 0
+  );
+
   CREATE INDEX IF NOT EXISTS idx_wifi_scan_ts    ON wifi_scan_history(ts DESC);
   CREATE INDEX IF NOT EXISTS idx_speedtest_ts    ON speedtest_history(ts DESC);
   CREATE INDEX IF NOT EXISTS idx_ping_ts         ON ping_history(ts DESC);

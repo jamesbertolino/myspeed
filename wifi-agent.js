@@ -658,6 +658,30 @@ const server = http.createServer((req, res) => {
     return
   }
 
+  // ARP rápido — só tabela ARP, sem port scan (para monitoramento contínuo)
+  if (url === '/arp') {
+    try {
+      const reqUrl = new URL(req.url, 'http://localhost')
+      const preferSubnet = reqUrl.searchParams.get('subnet') || undefined
+      const subnetInfo = getLocalSubnet(preferSubnet)
+      const inSubnetRange = subnetInfo
+        ? (ip) => { const n = ipToInt(ip); return n >= subnetInfo.network && n <= subnetInfo.broadcast }
+        : null
+      const arpHosts = getArpHosts(inSubnetRange)
+      const hosts = [...arpHosts.entries()]
+        .filter(([ip]) => {
+          if (!inSubnetRange || !inSubnetRange(ip)) return false
+          const last = parseInt(ip.split('.')[3])
+          return last !== 0 && last !== 255
+        })
+        .map(([ip, mac]) => ({ ip, mac }))
+      json(res, { hosts, ts: Date.now() })
+    } catch (e) {
+      json(res, { error: e.message, hosts: [] }, 500)
+    }
+    return
+  }
+
   // Scan de dispositivos (NDJSON streaming)
   if (url === '/devices') {
     handleDevices(req, res)
