@@ -13,13 +13,15 @@ class MonitorService : Service() {
     private lateinit var prefs: Prefs
     private lateinit var collector: DataCollector
     private lateinit var reporter: Reporter
+    private lateinit var lanScanner: LanScanner
     private var job: Job? = null
 
     override fun onCreate() {
         super.onCreate()
-        prefs     = Prefs(this)
-        collector = DataCollector(this)
-        reporter  = Reporter()
+        prefs      = Prefs(this)
+        collector  = DataCollector(this)
+        reporter   = Reporter()
+        lanScanner = LanScanner(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -34,21 +36,52 @@ class MonitorService : Service() {
         startForeground(NOTIF_ID, buildNotification("Monitoring…"))
         job?.cancel()
         job = scope.launch {
-            while (isActive) {
-                val url = prefs.serverUrl
-                if (url.isNotBlank()) {
-                    try {
-                        val report = collector.collect(prefs)
-                        val result = reporter.send(url, report)
-                        val msg = if (result.isSuccess) "Last report: OK"
-                                  else "Last report: ${result.exceptionOrNull()?.message}"
-                        updateNotification(msg)
-                        Log.d(TAG, msg)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Monitor error", e)
+            // Regular report loop
+            launch {
+                while (isActive) {
+                    val url = prefs.serverUrl
+                    if (url.isNotBlank()) {
+                        try {
+                            val report = collector.collect(prefs)
+                            val result = reporter.send(url, report)
+                            val msg = if (result.isSuccess) "Last report: OK"
+                                      else "Last report: ${result.exceptionOrNull()?.message}"
+                            updateNotification(msg)
+                            Log.d(TAG, msg)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Monitor error", e)
+                        }
                     }
+                    delay(prefs.intervalSeconds * 1000L)
                 }
-                delay(prefs.intervalSeconds * 1000L)
+            }
+
+            // LAN scan loop — runs every 10 minutes
+            launch {
+                delay(15_000L) // wait 15s after startup before first scan
+                while (isActive) {
+                    val url = prefs.serverUrl
+                    if (url.isNotBlank()) {
+                        try {
+                            val start = System.currentTimeMillis()
+                            val hosts = lanScanner.scan()
+                            val duration = System.currentTimeMillis() - start
+                            val localIp = lanScanner.getLocalIp() ?: ""
+                            val prefix = localIp.substringBeforeLast(".")
+                            val scanReport = LanScanReport(
+                                deviceId    = prefs.deviceId,
+                                subnet      = "$prefix.0/24",
+                                hosts       = hosts,
+                                durationMs  = duration
+                            )
+                            val result = reporter.sendLanScan(url, scanReport)
+                            Log.d(TAG, "LAN scan: ${hosts.size} hosts in ${duration}ms — ${if (result.isSuccess) "OK" else result.exceptionOrNull()?.message}")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "LAN scan error", e)
+                        }
+                    }
+                    delay(LAN_SCAN_INTERVAL_MS)
+                }
             }
         }
     }
@@ -91,8 +124,9 @@ class MonitorService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
-        const val TAG       = "MonitorService"
-        const val NOTIF_ID  = 1001
-        const val ACTION_STOP = "com.myspeed.monitor.STOP"
+        const val TAG                = "MonitorService"
+        const val NOTIF_ID           = 1001
+        const val ACTION_STOP        = "com.myspeed.monitor.STOP"
+        const val LAN_SCAN_INTERVAL_MS = 10 * 60 * 1000L // 10 minutes
     }
 }

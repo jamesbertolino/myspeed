@@ -82,6 +82,27 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_android_dev     ON android_devices(device_id);
   CREATE INDEX IF NOT EXISTS idx_android_rep_ts  ON android_reports(ts DESC);
   CREATE INDEX IF NOT EXISTS idx_android_rep_dev ON android_reports(device_id, ts DESC);
+
+  CREATE TABLE IF NOT EXISTS android_lan_scans (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          INTEGER NOT NULL,
+    device_id   TEXT    NOT NULL,
+    subnet      TEXT,
+    host_count  INTEGER NOT NULL,
+    duration_ms INTEGER
+  );
+
+  CREATE TABLE IF NOT EXISTS android_lan_hosts (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    scan_id    INTEGER NOT NULL,
+    ip         TEXT    NOT NULL,
+    mac        TEXT,
+    hostname   TEXT,
+    latency_ms INTEGER
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_lan_scans_dev  ON android_lan_scans(device_id, ts DESC);
+  CREATE INDEX IF NOT EXISTS idx_lan_hosts_scan ON android_lan_hosts(scan_id);
 `)
 
 export default db
