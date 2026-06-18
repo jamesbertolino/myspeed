@@ -1098,7 +1098,7 @@ export default function NetworkPage() {
                           <span className="text-gray-700 mono text-xs">—</span>
                         ) : (
                           <span className="font-bold mono text-sm transition-all duration-300" style={{ color }}>
-                            {hop.latency != null ? `${hop.latency.toFixed(1)}ms` : '…'}
+                            {hop.latency != null ? `${hop.latency.toFixed(2)} ms` : '…'}
                             {isLive && <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-current opacity-70 animate-pulse" />}
                           </span>
                         )}

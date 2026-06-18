@@ -51,6 +51,46 @@ function phyToWidth(phy) {
   return 20
 }
 
+// ── Connected network detection ──────────────────────────────────────────────
+
+function getConnectedNetwork() {
+  try {
+    if (isTermux()) {
+      const out = execSync('termux-wifi-connectioninfo', { encoding: 'utf8', timeout: 5000 })
+      const info = JSON.parse(out)
+      if (info.bssid) return { ssid: info.ssid || null, bssid: info.bssid.toLowerCase() }
+      return null
+    }
+    if (process.platform === 'win32') {
+      const out = execSync('netsh wlan show interfaces', { encoding: 'utf8', timeout: 5000 })
+      const lines = out.split('\n').map(l => l.trim()).filter(Boolean)
+      const bssid = extractField(lines, /^(?:AP\s+)?BSSID\s*:\s*(.+)/i)
+      const ssid  = extractField(lines, /^SSID\s*:\s*(?!.*BSSID)(.+)/i)
+      if (bssid) return { ssid: ssid || null, bssid: bssid.toLowerCase() }
+      return null
+    }
+    if (process.platform === 'darwin') {
+      const ap = '/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport'
+      const out = execSync(`${ap} -I`, { encoding: 'utf8', timeout: 5000 })
+      const lines = out.split('\n').map(l => l.trim()).filter(Boolean)
+      const bssid = extractField(lines, /^BSSID:\s*(.+)/i)
+      const ssid  = extractField(lines, /^\s*SSID:\s*(.+)/i)
+      if (bssid) return { ssid: ssid || null, bssid: bssid.toLowerCase() }
+      return null
+    }
+    // Linux
+    const out = execSync("nmcli -t -f ACTIVE,SSID,BSSID dev wifi 2>/dev/null", { encoding: 'utf8', timeout: 5000 })
+    const active = out.split('\n').find(l => l.startsWith('yes:'))
+    if (active) {
+      const parts = active.split(':')
+      const ssid  = parts[1] || null
+      const bssid = parts.slice(2, 8).join(':').toLowerCase()
+      if (bssid.length === 17) return { ssid, bssid }
+    }
+    return null
+  } catch (_) { return null }
+}
+
 // ── Platform WiFi scanners ────────────────────────────────────────────────────
 
 const WINRT_SCAN_PS1 = String.raw`
@@ -591,7 +631,8 @@ const server = http.createServer((req, res) => {
   if (url === '/scan') {
     try {
       const networks = scan()
-      json(res, { networks, platform: process.platform })
+      const connected = getConnectedNetwork()
+      json(res, { networks, connectedBssid: connected?.bssid ?? null, platform: process.platform })
     } catch (e) {
       json(res, { error: e.message, networks: [] }, 500)
     }
