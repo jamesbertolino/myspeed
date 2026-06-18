@@ -10,6 +10,16 @@ import clsx from 'clsx'
 
 const CHANGELOG: { version: string; date: string; items: string[] }[] = [
   {
+    version: 'v3.6.0',
+    date: '2026-06-18',
+    items: [
+      'Deteccao de Throttling: compara velocidade no pico (18-23h) vs livre (0-8h/10-16h) com grafico horario',
+      'Gerador de Reclamacao Anatel: petição formal com dados reais de SLA, violacoes e alertas pronta para protocolar',
+      'Mapa de Cobertura WiFi: grade de comodos com medicao de sinal por ponto, persistida localmente',
+      'Diagnostico Autonomo: dispara automaticamente ao detectar latencia >300ms e registra historico de ocorrencias',
+    ],
+  },
+  {
     version: 'v3.5.0',
     date: '2026-06-18',
     items: [
@@ -217,6 +227,8 @@ const nav = [
   { href: '/controllers', icon: Server, label: 'Controladores' },
   { href: '/security', icon: Shield, label: 'Centro de Segurança' },
   { href: '/history', icon: History, label: 'Histórico' },
+  { href: '/report', icon: Radio, label: 'Relatório PDF' },
+  { href: '/complaint', icon: Network, label: 'Reclamação Anatel' },
 ]
 
 const navBottom = [
@@ -651,7 +663,7 @@ function SidebarStatus() {
               onClick={() => setShowChangelog(true)}
               className="flex items-center gap-0.5 text-gray-400 hover:text-cyan-400 transition-colors group"
             >
-              v3.5.0
+              v3.6.0
               <ChevronDown className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
             </button>
           </div>

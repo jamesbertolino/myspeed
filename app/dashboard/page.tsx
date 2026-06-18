@@ -101,6 +101,41 @@ export default function Dashboard() {
       .catch(() => {})
   }, [])
 
+  // autonomous diagnostics
+  const [diagRows, setDiagRows] = useState<{ id: number; ts: number; trigger_why: string; ping_avg: number | null; dl_mbps: number | null; conclusion: string | null }[]>([])
+  const [diagRunning, setDiagRunning] = useState(false)
+  const lastDiagRef = useRef<number>(0)
+
+  const runDiag = async (trigger: string, pingAvg?: number, dlMbps?: number) => {
+    setDiagRunning(true)
+    try {
+      await fetch('/api/diagnostics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trigger, ping_avg: pingAvg, dl_mbps: dlMbps }),
+      })
+      fetch('/api/diagnostics?limit=5').then(r => r.json()).then(d => setDiagRows(d.rows ?? []))
+    } catch { /* */ }
+    setDiagRunning(false)
+  }
+
+  useEffect(() => {
+    fetch('/api/diagnostics?limit=5').then(r => r.json()).then(d => setDiagRows(d.rows ?? [])).catch(() => {})
+  }, [])
+
+  // Auto-trigger diagnostic on bad latency
+  useEffect(() => {
+    if (!currentLatency) return
+    const now = Date.now()
+    const cooldown = 10 * 60 * 1000
+    if (now - lastDiagRef.current < cooldown) return
+    if (currentLatency > 300) {
+      lastDiagRef.current = now
+      runDiag('high_latency', currentLatency)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentLatency])
+
   // interface monitor
   const [ifaces,       setIfaces]       = useState<IfaceStats[]>([])
   const [selIface,     setSelIface]     = useState<string>('')
@@ -549,6 +584,43 @@ export default function Dashboard() {
                     'text-green-300': ins.type === 'good',
                   })}>{ins.title}</p>
                   <p className="text-xs text-gray-500 mt-0.5">{ins.detail}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Diagnósticos automáticos */}
+      {diagRows.length > 0 && (
+        <div className="card p-5 mt-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Monitor className="w-4 h-4 text-purple-400" />
+              <h2 className="text-sm font-semibold text-white">Diagnósticos Automáticos</h2>
+            </div>
+            <button
+              onClick={() => runDiag('manual', currentLatency ?? undefined)}
+              disabled={diagRunning}
+              className="px-3 py-1 text-xs font-semibold rounded-lg border border-[#1a2744] text-gray-400 hover:text-white hover:border-cyan-500/40 transition-all disabled:opacity-50"
+            >
+              {diagRunning ? 'Rodando...' : 'Rodar agora'}
+            </button>
+          </div>
+          <div className="space-y-2">
+            {diagRows.map(d => (
+              <div key={d.id} className={clsx('flex items-start gap-3 px-3 py-2.5 rounded-lg border text-sm',
+                d.conclusion?.includes('Problemas') ? 'border-red-500/20 bg-red-500/5' : 'border-green-500/15 bg-green-500/3'
+              )}>
+                <div className={clsx('w-2 h-2 rounded-full mt-1.5 shrink-0', d.conclusion?.includes('Problemas') ? 'bg-red-400' : 'bg-green-400')} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-gray-300">{d.conclusion}</p>
+                  <p className="text-[10px] text-gray-600 mt-0.5">
+                    {new Date(d.ts).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                    {' · '}{d.trigger_why === 'high_latency' ? 'latência alta' : d.trigger_why === 'low_speed' ? 'velocidade baixa' : 'manual'}
+                    {d.ping_avg != null && ` · ${d.ping_avg.toFixed(0)}ms`}
+                    {d.dl_mbps != null && ` · ${d.dl_mbps.toFixed(1)}Mbps`}
+                  </p>
                 </div>
               </div>
             ))}

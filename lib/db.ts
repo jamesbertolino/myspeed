@@ -99,6 +99,17 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_snapshots_ts ON device_scan_snapshots(ts DESC);
 
+  CREATE TABLE IF NOT EXISTS diagnostics (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts           INTEGER NOT NULL,
+    trigger_why  TEXT    NOT NULL,
+    ping_avg     REAL,
+    dl_mbps      REAL,
+    conclusion   TEXT,
+    details_json TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_diagnostics_ts ON diagnostics(ts DESC);
+
   CREATE TABLE IF NOT EXISTS known_devices (
     mac        TEXT    PRIMARY KEY,
     label      TEXT,

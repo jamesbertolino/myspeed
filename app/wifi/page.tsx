@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
-import { Wifi, Plus, Trash2, Info, CheckCircle, AlertTriangle, Radio, ScanLine, RefreshCw, Puzzle, Sparkles, ShieldCheck, ShieldAlert, ShieldX, TrendingUp, Terminal, Smartphone, FileDown, Activity } from 'lucide-react'
+import { Wifi, Plus, Trash2, Info, CheckCircle, AlertTriangle, Radio, ScanLine, RefreshCw, Puzzle, Sparkles, ShieldCheck, ShieldAlert, ShieldX, TrendingUp, Terminal, Smartphone, FileDown, Activity, Map, RotateCcw } from 'lucide-react'
 import WiFiChannelMap, { WiFiNetwork } from '@/components/WiFiChannelMap'
 import { NON_OVERLAPPING_24, NON_OVERLAPPING_5 } from '@/lib/utils'
 import { loadSettings } from '@/lib/settings'
@@ -181,7 +181,60 @@ export default function WiFiPage() {
   const [aiAnalysis, setAiAnalysis] = useState<AIAnalysis | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [wifiTab, setWifiTab] = useState<'channels' | 'heatmap'>('channels')
   const [liveMode, setLiveMode] = useState(false)
+
+  // Heatmap state
+  interface HeatCell { row: number; col: number; label: string; score: number | null; ts: number | null }
+  const HEATMAP_LS = 'myspeed_heatmap_v1'
+  const [heatCells, setHeatCells] = useState<HeatCell[]>(() => {
+    try {
+      const raw = localStorage.getItem('myspeed_heatmap_v1')
+      if (raw) return JSON.parse(raw)
+    } catch { /* */ }
+    return []
+  })
+  const [heatRows] = useState(4)
+  const [heatCols] = useState(6)
+  const [heatLabels, setHeatLabels] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem('myspeed_heatmap_labels')
+      if (raw) return JSON.parse(raw)
+    } catch { /* */ }
+    return {}
+  })
+  const [measuringCell, setMeasuringCell] = useState<string | null>(null)
+
+  const cellKey = (r: number, c: number) => `${r}-${c}`
+
+  const measureCell = async (row: number, col: number) => {
+    const key = cellKey(row, col)
+    setMeasuringCell(key)
+    // Use current WiFi score from competitorNetworks / myChannel
+    const penalty24 = myChannel24 != null ? channelPenalty(competitorNetworks, '2.4', myChannel24) : null
+    const score = penalty24 != null ? Math.max(0, Math.round(100 - penalty24)) : null
+    const cell: HeatCell = { row, col, label: heatLabels[key] ?? '', score, ts: Date.now() }
+    setHeatCells(prev => {
+      const updated = [...prev.filter(c => !(c.row === row && c.col === col)), cell]
+      try { localStorage.setItem(HEATMAP_LS, JSON.stringify(updated)) } catch { /* */ }
+      return updated
+    })
+    setMeasuringCell(null)
+  }
+
+  const clearHeat = () => {
+    setHeatCells([])
+    try { localStorage.removeItem(HEATMAP_LS) } catch { /* */ }
+  }
+
+  const setHeatLabel = (key: string, label: string) => {
+    setHeatLabels(prev => {
+      const updated = { ...prev, [key]: label }
+      try { localStorage.setItem('myspeed_heatmap_labels', JSON.stringify(updated)) } catch { /* */ }
+      return updated
+    })
+    setHeatCells(prev => prev.map(c => c.row === parseInt(key.split('-')[0]) && c.col === parseInt(key.split('-')[1]) ? { ...c, label } : c))
+  }
   const [lastUpdate, setLastUpdate] = useState<number | null>(null)
   const [recommended24, setRecommended24] = useState<number>(NON_OVERLAPPING_24[0])
   const [recommended5, setRecommended5] = useState<number>(NON_OVERLAPPING_5[0])
@@ -687,6 +740,132 @@ export default function WiFiPage() {
         </div>
       )}
 
+      {/* Top tab switcher: Canais / Mapa de Cobertura */}
+      <div className="flex gap-1 mb-4 bg-[#0a1128] rounded-xl p-1 border border-[#1a2744] overflow-x-auto">
+        {([
+          { id: 'channels', icon: Radio,  label: 'Canais e Interferência' },
+          { id: 'heatmap',  icon: Map,    label: 'Mapa de Cobertura' },
+        ] as const).map(t => (
+          <button key={t.id} onClick={() => setWifiTab(t.id)}
+            className={clsx('flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all whitespace-nowrap flex-shrink-0',
+              wifiTab === t.id ? 'bg-[#1a2744] text-white' : 'text-gray-500 hover:text-gray-300')}>
+            <t.icon className="w-4 h-4" />{t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* HEATMAP TAB */}
+      {wifiTab === 'heatmap' && (
+        <div className="space-y-4">
+          <div className="card p-5">
+            <div className="flex items-start justify-between gap-4 mb-3">
+              <div>
+                <h2 className="text-sm font-semibold text-white mb-1">Mapa de Cobertura WiFi por Cômodo</h2>
+                <p className="text-xs text-gray-500">
+                  Clique em cada célula da planta para medir o sinal atual. Leve o dispositivo ao cômodo e clique em "Medir". O mapa é salvo automaticamente.
+                </p>
+              </div>
+              <button onClick={clearHeat} className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 border border-[#1a2744] rounded-lg hover:text-red-400 hover:border-red-400/30 transition-all">
+                <RotateCcw className="w-3.5 h-3.5" /> Limpar
+              </button>
+            </div>
+
+            {!isRealData && (
+              <div className="mb-4 px-3 py-2.5 rounded-lg border border-yellow-500/20 bg-yellow-500/5 text-xs text-yellow-400 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                Para medições precisas, faça um scan real primeiro (agente local ou extensão Chrome) e depois meça cada cômodo.
+              </div>
+            )}
+
+            {/* Grid */}
+            <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${heatCols}, 1fr)` }}>
+              {Array.from({ length: heatRows }, (_, r) =>
+                Array.from({ length: heatCols }, (_, c) => {
+                  const key = cellKey(r, c)
+                  const cell = heatCells.find(h => h.row === r && h.col === c)
+                  const score = cell?.score ?? null
+                  const color = score == null ? null : score >= 80 ? '#00ff88' : score >= 60 ? '#ffd700' : score >= 40 ? '#ff8c00' : '#ff4d4d'
+                  const isMeasuring = measuringCell === key
+                  return (
+                    <div key={key} className="group relative flex flex-col items-center gap-1 rounded-xl border transition-all cursor-pointer select-none"
+                      style={{
+                        minHeight: 90,
+                        background: score != null ? `${color}15` : '#0a1128',
+                        borderColor: score != null ? `${color}40` : '#1a2744',
+                      }}
+                    >
+                      {/* Label input */}
+                      <input
+                        value={heatLabels[key] ?? ''}
+                        onChange={e => setHeatLabel(key, e.target.value)}
+                        placeholder={`${r+1}-${c+1}`}
+                        className="w-full bg-transparent text-center text-[10px] text-gray-500 outline-none px-1 pt-2 placeholder:text-gray-700"
+                      />
+                      {/* Score display */}
+                      <div className="flex-1 flex items-center justify-center">
+                        {isMeasuring ? (
+                          <RefreshCw className="w-4 h-4 animate-spin text-cyan-400" />
+                        ) : score != null ? (
+                          <span className="text-lg font-black" style={{ color: color ?? undefined }}>{score}</span>
+                        ) : (
+                          <span className="text-2xl text-gray-700 group-hover:text-gray-500 transition-colors">+</span>
+                        )}
+                      </div>
+                      {/* Measure button */}
+                      <button
+                        onClick={() => measureCell(r, c)}
+                        disabled={isMeasuring || (!isRealData && networks.length === 0)}
+                        className="mb-2 px-2 py-0.5 rounded text-[10px] font-semibold opacity-0 group-hover:opacity-100 transition-opacity bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 hover:bg-cyan-500/30 disabled:opacity-40"
+                      >
+                        {isMeasuring ? '...' : 'Medir'}
+                      </button>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+
+            {/* Legend */}
+            <div className="flex gap-4 mt-4 text-xs text-gray-500 flex-wrap">
+              {[['#00ff88', '≥80 Excelente'], ['#ffd700', '≥60 Bom'], ['#ff8c00', '≥40 Regular'], ['#ff4d4d', '<40 Ruim']].map(([c, l]) => (
+                <span key={l} className="flex items-center gap-1">
+                  <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: c }} />{l}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Summary */}
+          {heatCells.length > 0 && (
+            <div className="card p-4">
+              <h3 className="text-sm font-semibold text-white mb-3">Resumo — {heatCells.length} ponto{heatCells.length !== 1 ? 's' : ''} medido{heatCells.length !== 1 ? 's' : ''}</h3>
+              <div className="grid grid-cols-4 gap-3">
+                {['Excelente (≥80)', 'Bom (60–79)', 'Regular (40–59)', 'Ruim (<40)'].map((label, i) => {
+                  const thresholds = [[80, 101], [60, 80], [40, 60], [0, 40]]
+                  const [lo, hi] = thresholds[i]
+                  const count = heatCells.filter(c => c.score != null && c.score >= lo && c.score < hi).length
+                  const colors = ['#00ff88', '#ffd700', '#ff8c00', '#ff4d4d']
+                  return (
+                    <div key={label} className="text-center">
+                      <p className="text-xl font-black" style={{ color: colors[i] }}>{count}</p>
+                      <p className="text-xs text-gray-500">{label}</p>
+                    </div>
+                  )
+                })}
+              </div>
+              {heatCells.some(c => c.score != null && c.score < 40) && (
+                <p className="text-xs text-red-400 mt-3 flex items-center gap-1">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  Zonas mortas detectadas. Considere um access point ou repetidor nos cômodos com sinal ruim.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {wifiTab === 'channels' && <>
+
       {/* Band Selector */}
       <div className="flex gap-1 mb-6 bg-[#0a1128] rounded-xl p-1 border border-[#1a2744] overflow-x-auto">
         {(['2.4', '5'] as const).map(b => (
@@ -1118,6 +1297,8 @@ export default function WiFiPage() {
           )}
         </div>
       )}
+
+      </>}
     </div>
   )
 }

@@ -300,7 +300,26 @@ function analyzeResults(result: ScanResult) {
 }
 
 export default function NetworkPage() {
-  const [tab, setTab] = useState<'ping' | 'traceroute' | 'dns' | 'dns-leak' | 'scanner' | 'security' | 'benchmark' | 'whois'>('ping')
+  const [tab, setTab] = useState<'ping' | 'traceroute' | 'dns' | 'dns-leak' | 'throttling' | 'scanner' | 'security' | 'benchmark' | 'whois'>('ping')
+
+  // Throttling detection state
+  const [throttleData, setThrottleData] = useState<{
+    hourly: { hour: number; avgDl: number; avgUl: number; avgPing: number; count: number }[]
+    throttling: {
+      verdict: string; score: number; evidence: string[]
+      peakDl: number | null; offPeakDl: number | null
+      peakPing: number | null; offPeakPing: number | null
+      dlDropPct: number | null; pingIncreasePct: number | null
+    } | null
+    message?: string
+  } | null>(null)
+  const [throttleLoading, setThrottleLoading] = useState(false)
+  const loadThrottle = async () => {
+    setThrottleLoading(true)
+    try { setThrottleData(await fetch('/api/history/throttling').then(r => r.json())) }
+    catch { /* ignore */ }
+    setThrottleLoading(false)
+  }
 
   // DNS Leak state
   const [leakResult, setLeakResult] = useState<{
@@ -801,6 +820,7 @@ export default function NetworkPage() {
           { id: 'traceroute', icon: Network,      label: 'Traceroute' },
           { id: 'dns',        icon: Globe,        label: 'DNS' },
           { id: 'dns-leak',   icon: Shield,       label: 'DNS Leak' },
+          { id: 'throttling', icon: Activity,      label: 'Throttling' },
           { id: 'benchmark',  icon: Zap,          label: 'DNS Benchmark' },
           { id: 'whois',      icon: FileSearch,   label: 'WHOIS' },
           { id: 'scanner',    icon: Radar,        label: 'Scanner' },
@@ -1420,6 +1440,140 @@ export default function NetworkPage() {
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {/* THROTTLING TAB */}
+      {tab === 'throttling' && (
+        <div className="space-y-4">
+          <div className="card p-5">
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div>
+                <h2 className="text-sm font-semibold text-white mb-1">Detecção de Throttling do ISP</h2>
+                <p className="text-xs text-gray-500">
+                  Compara a velocidade em horário de pico (18h–23h) com horário livre (0h–8h, 10h–16h) para detectar limitação deliberada de banda.
+                </p>
+              </div>
+              <button
+                onClick={loadThrottle}
+                disabled={throttleLoading}
+                className="btn-cyan px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 disabled:opacity-50 shrink-0"
+              >
+                {throttleLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                {throttleLoading ? 'Analisando...' : 'Analisar'}
+              </button>
+            </div>
+          </div>
+
+          {throttleData?.message && !throttleData.throttling && (
+            <div className="card p-4 flex items-center gap-3 text-yellow-400 text-sm border-yellow-500/20">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              {throttleData.message}
+            </div>
+          )}
+
+          {throttleData?.throttling && (() => {
+            const t = throttleData.throttling!
+            const verdictColor = t.verdict === 'alto' ? '#ff4d4d' : t.verdict === 'moderado' ? '#ff8c00' : t.verdict === 'baixo' ? '#ffd700' : '#00ff88'
+            const verdictLabel = t.verdict === 'alto' ? 'Throttling Alto' : t.verdict === 'moderado' ? 'Throttling Moderado' : t.verdict === 'baixo' ? 'Possível Throttling' : 'Sem Throttling'
+            return (
+              <div className="space-y-4">
+                {/* Verdict banner */}
+                <div className="card p-5 border" style={{ borderColor: verdictColor + '40', background: verdictColor + '08' }}>
+                  <div className="flex items-center gap-4">
+                    <div className="w-14 h-14 rounded-full flex items-center justify-center border-2 font-bold shrink-0" style={{ borderColor: verdictColor, color: verdictColor }}>
+                      {t.score}/5
+                    </div>
+                    <div>
+                      <p className="text-lg font-bold" style={{ color: verdictColor }}>{verdictLabel}</p>
+                      {t.evidence.length > 0 ? (
+                        <ul className="mt-1 space-y-0.5">
+                          {t.evidence.map((e, i) => <li key={i} className="text-xs text-gray-400">• {e}</li>)}
+                        </ul>
+                      ) : (
+                        <p className="text-xs text-gray-400 mt-1">Nenhuma evidência de limitação detectada nos últimos 30 dias.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Comparison cards */}
+                <div className="grid grid-cols-2 gap-4">
+                  {[
+                    {
+                      label: 'Download: Pico vs Livre',
+                      peak: t.peakDl, offPeak: t.offPeakDl,
+                      drop: t.dlDropPct,
+                      unit: 'Mbps', higher: false,
+                    },
+                    {
+                      label: 'Ping: Pico vs Livre',
+                      peak: t.peakPing, offPeak: t.offPeakPing,
+                      drop: t.pingIncreasePct,
+                      unit: 'ms', higher: true,
+                    },
+                  ].map(c => (
+                    <div key={c.label} className="card p-4">
+                      <p className="text-xs text-gray-500 mb-3">{c.label}</p>
+                      <div className="flex items-end justify-between gap-2">
+                        <div className="text-center">
+                          <p className="text-xs text-gray-600 mb-1">18h–23h (pico)</p>
+                          <p className="text-xl font-bold text-white">{c.peak != null ? c.peak.toFixed(1) : '—'}</p>
+                          <p className="text-xs text-gray-500">{c.unit}</p>
+                        </div>
+                        <div className="flex-1 text-center">
+                          {c.drop != null && (
+                            <span className="text-xs font-bold" style={{ color: (c.higher ? c.drop > 50 : c.drop > 20) ? '#ff4d4d' : '#ffd700' }}>
+                              {c.higher ? '+' : '-'}{Math.abs(c.drop).toFixed(0)}%
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xs text-gray-600 mb-1">0h–16h (livre)</p>
+                          <p className="text-xl font-bold text-[#00ff88]">{c.offPeak != null ? c.offPeak.toFixed(1) : '—'}</p>
+                          <p className="text-xs text-gray-500">{c.unit}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Hourly chart */}
+                {throttleData.hourly.length > 0 && (
+                  <div className="card p-5">
+                    <h3 className="text-sm font-semibold text-white mb-4">Download médio por hora do dia (últimos 30 dias)</h3>
+                    <div className="flex items-end gap-1 h-32">
+                      {Array.from({ length: 24 }, (_, h) => {
+                        const row = throttleData.hourly.find(r => r.hour === h)
+                        const maxDl = Math.max(...throttleData.hourly.map(r => r.avgDl), 1)
+                        const barH = row ? Math.max(4, (row.avgDl / maxDl) * 100) : 0
+                        const isPeak = h >= 18 && h <= 23
+                        const color = !row ? '#1a2744' : isPeak ? '#ff8c00' : '#00d4ff'
+                        return (
+                          <div key={h} className="flex-1 flex flex-col items-center gap-1 group relative">
+                            {row && (
+                              <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-[#0a1128] border border-[#1a2744] rounded px-2 py-1 text-[10px] text-gray-300 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity z-10 pointer-events-none">
+                                {h}h: {row.avgDl.toFixed(1)} Mbps ({row.count} testes)
+                              </div>
+                            )}
+                            <div
+                              className="w-full rounded-t transition-all"
+                              style={{ height: `${barH}%`, background: color + (row ? '' : '30') }}
+                            />
+                            <span className="text-[9px] text-gray-600 shrink-0">{h === 0 || h % 6 === 0 ? `${h}h` : ''}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                    <div className="flex gap-4 mt-2 text-xs text-gray-500">
+                      <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-orange-500 inline-block" />Horário de pico (18h–23h)</span>
+                      <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-cyan-400 inline-block" />Horário livre</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
         </div>
       )}
 
