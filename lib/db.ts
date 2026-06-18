@@ -76,6 +76,20 @@ db.exec(`
     extra        TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS wifi_scan_history (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts            INTEGER NOT NULL,
+    band24_ch     INTEGER,
+    band24_score  INTEGER,
+    band24_rec    INTEGER,
+    band5_ch      INTEGER,
+    band5_score   INTEGER,
+    band5_rec     INTEGER,
+    net_count     INTEGER NOT NULL DEFAULT 0,
+    networks_json TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_wifi_scan_ts    ON wifi_scan_history(ts DESC);
   CREATE INDEX IF NOT EXISTS idx_speedtest_ts    ON speedtest_history(ts DESC);
   CREATE INDEX IF NOT EXISTS idx_ping_ts         ON ping_history(ts DESC);
   CREATE INDEX IF NOT EXISTS idx_alert_ts        ON alert_log(ts DESC);

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { Wifi, Plus, Trash2, Info, CheckCircle, AlertTriangle, Radio, ScanLine, RefreshCw, Puzzle, Sparkles, ShieldCheck, ShieldAlert, ShieldX, TrendingUp, Terminal, Smartphone, FileDown, Activity } from 'lucide-react'
 import WiFiChannelMap, { WiFiNetwork } from '@/components/WiFiChannelMap'
 import { NON_OVERLAPPING_24, NON_OVERLAPPING_5 } from '@/lib/utils'
@@ -185,6 +185,7 @@ export default function WiFiPage() {
   const [recommended24, setRecommended24] = useState<number>(NON_OVERLAPPING_24[0])
   const [recommended5, setRecommended5] = useState<number>(NON_OVERLAPPING_5[0])
   const [connectedBssid, setConnectedBssid] = useState<string | null>(null)
+  const lastSaveRef = useRef<number>(0)
 
   // Detect Chrome extension
   useEffect(() => {
@@ -413,6 +414,30 @@ export default function WiFiPage() {
     setRecommended5(prev => bestChannel(competitorNetworks, '5', prev))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [competitorNetworks])
+
+  // Salva snapshot no histórico após cada scan real (throttle 30s).
+  useEffect(() => {
+    if (!isRealData || networks.length === 0) return
+    const now = Date.now()
+    if (now - lastSaveRef.current < 30_000) return
+    lastSaveRef.current = now
+    const penalty24 = myChannel24 != null ? channelPenalty(competitorNetworks, '2.4', myChannel24) : null
+    const penalty5  = myChannel5  != null ? channelPenalty(competitorNetworks, '5',   myChannel5)  : null
+    fetch('/api/history/wifi', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        band24_ch:    myChannel24,
+        band24_score: penalty24 != null ? Math.max(0, Math.round(100 - penalty24)) : null,
+        band24_rec:   recommended24,
+        band5_ch:     myChannel5,
+        band5_score:  penalty5 != null ? Math.max(0, Math.round(100 - penalty5)) : null,
+        band5_rec:    recommended5,
+        networks,
+      }),
+    }).catch(() => { /* histórico é best-effort */ })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [networks, isRealData])
 
   const currentBandNets = networks.filter(n => n.band === band).sort((a, b) => b.signal - a.signal)
   const recommended = band === '2.4' ? recommended24 : recommended5
