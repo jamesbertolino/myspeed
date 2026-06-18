@@ -6,6 +6,40 @@ import WiFiChannelMap, { WiFiNetwork } from '@/components/WiFiChannelMap'
 import { NON_OVERLAPPING_24, NON_OVERLAPPING_5 } from '@/lib/utils'
 import clsx from 'clsx'
 
+// Gauge semi-circular de qualidade do canal (0–100).
+// Usa stroke-dasharray sobre um arco SVG — sem dependências externas.
+function ChannelQualityGauge({ score, size = 'md' }: { score: number; size?: 'sm' | 'md' }) {
+  const R    = size === 'sm' ? 22 : 30
+  const W    = R * 2 + 12
+  const H    = R + 10
+  const cx   = W / 2
+  const cy   = R + 4
+  const C    = Math.PI * R
+  const filled = Math.max(0, Math.min(1, score / 100)) * C
+  const sw   = size === 'sm' ? 4 : 5
+  const fs   = size === 'sm' ? 10 : 13
+  const color = score >= 80 ? '#00ff88' : score >= 60 ? '#ffd700' : score >= 40 ? '#ff8c00' : '#ff4d4d'
+  const label = score >= 80 ? 'Excelente' : score >= 60 ? 'Bom' : score >= 40 ? 'Regular' : score >= 20 ? 'Ruim' : 'Crítico'
+  const lx   = R + 6
+  const ly   = R + 3
+
+  return (
+    <div className="flex flex-col items-center select-none">
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
+        <path d={`M ${cx - R} ${cy} A ${R} ${R} 0 0 1 ${cx + R} ${cy}`}
+          fill="none" stroke="#1a2744" strokeWidth={sw} strokeLinecap="round" />
+        <path d={`M ${cx - R} ${cy} A ${R} ${R} 0 0 1 ${cx + R} ${cy}`}
+          fill="none" stroke={color} strokeWidth={sw} strokeLinecap="round"
+          strokeDasharray={`${filled} ${C}`}
+          style={{ filter: `drop-shadow(0 0 4px ${color}66)`, transition: 'stroke-dasharray 0.5s ease' }} />
+        <text x={cx} y={ly} textAnchor="middle" fill={color}
+          fontSize={fs} fontWeight="bold" fontFamily="monospace">{score}</text>
+      </svg>
+      <span className="font-semibold tracking-wide" style={{ color, fontSize: size === 'sm' ? 9 : 10, marginTop: -4 }}>{label}</span>
+    </div>
+  )
+}
+
 export interface AIAnalysis {
   summary: string
   score: number
@@ -641,25 +675,45 @@ export default function WiFiPage() {
           if (mine == null) return null
           const minePenalty = channelPenalty(competitorNetworks, band, mine)
           const recPenalty  = channelPenalty(competitorNetworks, band, recommended)
+          const mineScore   = Math.max(0, Math.round(100 - minePenalty))
+          const recScore    = Math.max(0, Math.round(100 - recPenalty))
           const sameChannel = mine === recommended
           return (
-            <div className="flex items-center gap-3 mb-4 px-3 py-2 rounded-lg bg-[#0f1a35] border border-[#1a2744] text-xs flex-wrap">
-              <span className="text-gray-500">Seu canal atual (sinal mais forte):</span>
-              <span className={clsx('font-mono font-bold', minePenalty > 30 ? 'text-red-400' : minePenalty > 5 ? 'text-yellow-400' : 'text-green-400')}>
-                CH {mine}
-              </span>
-              <span className="text-gray-600">·</span>
-              <span className="text-gray-500">interferência: {minePenalty.toFixed(0)}</span>
-              {!sameChannel && (
-                <>
-                  <span className="text-gray-600 mx-1">→</span>
-                  <span className="text-gray-500">recomendado:</span>
-                  <span className="font-mono font-bold text-[#00ff88]">CH {recommended}</span>
-                  <span className="text-gray-600">·</span>
-                  <span className="text-gray-500">interferência: {recPenalty.toFixed(0)}</span>
-                </>
-              )}
-              {sameChannel && <span className="tag tag-green ml-auto">Você já está no melhor canal</span>}
+            <div className="mb-4 px-4 py-3 rounded-xl bg-[#0f1a35] border border-[#1a2744]">
+              <div className="flex items-center gap-4">
+                {/* Gauge canal atual */}
+                <div className="flex flex-col items-center gap-0.5">
+                  <ChannelQualityGauge score={mineScore} />
+                  <span className="text-[11px] text-gray-500 mt-1">Canal atual</span>
+                  <span className="text-xs font-mono font-bold text-white">CH {mine}</span>
+                </div>
+
+                {/* Seta + mensagem */}
+                <div className="flex-1 flex flex-col items-center gap-1">
+                  {sameChannel ? (
+                    <>
+                      <CheckCircle className="w-5 h-5 text-[#00ff88]" />
+                      <span className="text-[11px] text-[#00ff88] font-semibold text-center">Você já está no melhor canal</span>
+                    </>
+                  ) : (
+                    <>
+                      <TrendingUp className="w-5 h-5 text-[#00d4ff]" />
+                      <span className="text-[11px] text-gray-400 text-center">
+                        Mudar para <span className="text-white font-bold">CH {recommended}</span> melhora {recScore - mineScore > 0 ? `+${recScore - mineScore} pts` : 'o canal'}
+                      </span>
+                    </>
+                  )}
+                </div>
+
+                {/* Gauge canal recomendado (só se diferente) */}
+                {!sameChannel && (
+                  <div className="flex flex-col items-center gap-0.5">
+                    <ChannelQualityGauge score={recScore} />
+                    <span className="text-[11px] text-gray-500 mt-1">Recomendado</span>
+                    <span className="text-xs font-mono font-bold text-[#00ff88]">CH {recommended}</span>
+                  </div>
+                )}
+              </div>
             </div>
           )
         })()}
