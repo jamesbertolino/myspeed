@@ -325,6 +325,7 @@ export default function NetworkPage() {
   const [traceHops, setTraceHops] = useState<TraceHop[]>([])
   const [traceLoading, setTraceLoading] = useState(false)
   const [traceSimulated, setTraceSimulated] = useState(false)
+  const [traceVisual, setTraceVisual] = useState(false)
   const [traceDone, setTraceDone] = useState(false)
   const [traceError, setTraceError] = useState('')
   const [traceLive, setTraceLive] = useState(false)
@@ -1068,14 +1069,79 @@ export default function NetworkPage() {
               </div>
             ) : (
               <>
-                <div className="px-4 py-3 border-b border-[#1a2744] grid grid-cols-12 text-xs text-gray-500 uppercase tracking-wider font-semibold">
-                  <span className="col-span-1">#</span>
-                  <span className="col-span-4">Host / IP</span>
-                  <span className="col-span-3 text-right">Latência</span>
-                  <span className="col-span-4 text-right">Status</span>
+                <div className="px-4 py-3 border-b border-[#1a2744] flex items-center justify-between">
+                  <div className="grid grid-cols-12 text-xs text-gray-500 uppercase tracking-wider font-semibold flex-1">
+                    <span className="col-span-1">#</span>
+                    <span className="col-span-4">Host / IP</span>
+                    <span className="col-span-3 text-right">Latência</span>
+                    <span className="col-span-4 text-right">Status</span>
+                  </div>
+                  {traceHops.length > 0 && (
+                    <button
+                      onClick={() => setTraceVisual(v => !v)}
+                      className={clsx('ml-4 px-3 py-1 rounded-lg text-xs font-semibold border transition-all shrink-0', traceVisual ? 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300' : 'border-[#1a2744] text-gray-500 hover:text-gray-300')}
+                    >
+                      {traceVisual ? 'Tabela' : 'Visual'}
+                    </button>
+                  )}
                 </div>
 
-                {traceHops.map((hop) => {
+                {/* Visual hop diagram */}
+                {traceVisual && traceHops.length > 0 && (
+                  <div className="p-4 overflow-x-auto">
+                    <div className="flex items-end gap-1 min-w-max">
+                      {/* Origin */}
+                      <div className="flex flex-col items-center gap-1">
+                        <div className="w-12 h-12 rounded-xl bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center">
+                          <Globe className="w-5 h-5 text-cyan-400" />
+                        </div>
+                        <span className="text-[10px] text-gray-600 text-center">Você</span>
+                      </div>
+                      {traceHops.map((hop, idx) => {
+                        const color = hop.timeout ? '#4a5568' : hop.latency ? (hop.latency <= 20 ? '#00ff88' : hop.latency <= 60 ? '#00d4ff' : hop.latency <= 150 ? '#ffd700' : '#ff4d4d') : '#4a5568'
+                        const barH = hop.timeout ? 8 : hop.latency ? Math.min(80, Math.max(8, hop.latency * 0.8)) : 8
+                        // latency delta from prev hop
+                        const prevHop = idx > 0 ? traceHops[idx - 1] : null
+                        const delta = (hop.latency != null && prevHop?.latency != null) ? hop.latency - prevHop.latency : null
+                        return (
+                          <div key={hop.hop} className="flex items-end gap-1">
+                            {/* connector line */}
+                            <div className="flex flex-col items-center justify-end mb-4 gap-0.5">
+                              <div className="w-6 h-px" style={{ background: color + '60' }} />
+                            </div>
+                            {/* hop bar */}
+                            <div className="flex flex-col items-center gap-1">
+                              <span className="text-[9px] font-mono" style={{ color }}>{hop.latency != null ? `${hop.latency.toFixed(0)}ms` : '—'}</span>
+                              {delta != null && delta > 5 && <span className="text-[9px] text-orange-400">+{delta.toFixed(0)}</span>}
+                              <div className="w-10 rounded-t-lg transition-all duration-500 relative group" style={{ height: barH, background: `${color}30`, border: `1px solid ${color}40` }}>
+                                <div className="absolute -top-14 left-1/2 -translate-x-1/2 bg-[#0a1128] border border-[#1a2744] rounded-lg px-2 py-1.5 text-[10px] text-gray-300 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity z-10 pointer-events-none">
+                                  <p className="font-mono text-xs" style={{ color }}>{hop.ip}</p>
+                                  {hop.host !== hop.ip && <p className="text-gray-500">{hop.host}</p>}
+                                </div>
+                              </div>
+                              <span className="text-[9px] text-gray-600">#{hop.hop}</span>
+                              <span className="text-[9px] font-mono text-gray-700 max-w-[40px] truncate text-center">{hop.timeout ? '***' : hop.ip.split('.').pop()}</span>
+                            </div>
+                          </div>
+                        )
+                      })}
+                      {/* Destination */}
+                      <div className="flex items-end gap-1">
+                        <div className="flex flex-col items-center justify-end mb-4">
+                          <div className="w-6 h-px bg-gray-700" />
+                        </div>
+                        <div className="flex flex-col items-center gap-1">
+                          <div className="w-12 h-12 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center">
+                            <Server className="w-5 h-5 text-purple-400" />
+                          </div>
+                          <span className="text-[10px] text-gray-600 text-center max-w-[48px] truncate">{traceTarget}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {!traceVisual && traceHops.map((hop) => {
                   const color = hop.timeout ? '#4a5568' : hop.latency ? latencyColor(hop.latency) : '#4a5568'
                   const isLive = traceLive && traceDone && !hop.timeout && hop.ip !== '*'
                   return (

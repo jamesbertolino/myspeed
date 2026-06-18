@@ -23,6 +23,8 @@ export interface AppSettings {
   ecgPitchDev: number         // desvio de pitch do beep em % (padrão: 20)
   alerts: AlertThresholds
   autoSpeedtest: number       // intervalo em horas (0 = desativado)
+  contractedDownload: number  // Mbps contratado (0 = não configurado)
+  contractedUpload: number    // Mbps contratado (0 = não configurado)
 }
 
 export const DEFAULT_ALERTS: AlertThresholds = {
@@ -49,6 +51,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ecgPitchDev: 20,
   alerts: DEFAULT_ALERTS,
   autoSpeedtest: 0,
+  contractedDownload: 0,
+  contractedUpload: 0,
 }
 
 const KEY = 'myspeed_settings'

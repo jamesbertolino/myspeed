@@ -271,6 +271,30 @@ export default function SettingsPage() {
         )}
       </section>
 
+      {/* Plano / SLA */}
+      <section className="card p-5 mb-4">
+        <h2 className="text-sm font-semibold text-white mb-1">Velocidade Contratada</h2>
+        <p className="text-xs text-gray-500 mb-4">Usada para calcular conformidade com o SLA do ISP · 0 = não configurado</p>
+        <div className="flex gap-4">
+          <div className="flex-1">
+            <label className="text-xs text-gray-400 block mb-1">Download contratado (Mbps)</label>
+            <input type="number" min={0}
+              className="input-field w-full text-right mono"
+              value={settings.contractedDownload ?? 0}
+              onChange={e => setSettings(s => ({ ...s, contractedDownload: Number(e.target.value) }))}
+            />
+          </div>
+          <div className="flex-1">
+            <label className="text-xs text-gray-400 block mb-1">Upload contratado (Mbps)</label>
+            <input type="number" min={0}
+              className="input-field w-full text-right mono"
+              value={settings.contractedUpload ?? 0}
+              onChange={e => setSettings(s => ({ ...s, contractedUpload: Number(e.target.value) }))}
+            />
+          </div>
+        </div>
+      </section>
+
       {/* Alertas */}
       <section className="card p-5 mb-4">
         <div className="flex items-center justify-between mb-1">

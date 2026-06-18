@@ -10,6 +10,17 @@ import clsx from 'clsx'
 
 const CHANGELOG: { version: string; date: string; items: string[] }[] = [
   {
+    version: 'v3.4.0',
+    date: '2026-06-18',
+    items: [
+      'SLA: aba no Historico calcula conformidade com velocidade contratada (download/upload, 30 dias)',
+      'Dispositivos Conhecidos: tabela com 1a vez / ultima vez visto, fabricante, label e status online/inativo',
+      'Traceroute Visual: modo diagrama de saltos com barra de latencia por hop e tooltip com IP/hostname',
+      'Insights de Tendencia: widget no Dashboard detecta degradacao de ping, download, WiFi e novos dispositivos',
+      'Configuracoes: campo de velocidade contratada (Mbps) para calculo de SLA',
+    ],
+  },
+  {
     version: 'v3.3.0',
     date: '2026-06-18',
     items: [
@@ -531,7 +542,7 @@ function SidebarStatus() {
             onClick={() => setShowChangelog(true)}
             className="flex items-center gap-0.5 text-gray-400 hover:text-cyan-400 transition-colors group"
           >
-            v3.3.0
+            v3.4.0
             <ChevronDown className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
           </button>
         </div>

@@ -92,6 +92,15 @@ export default function Dashboard() {
       .catch(() => {})
   }, [])
 
+  // trends / insights
+  const [insights, setInsights] = useState<{ type: 'warning' | 'info' | 'good'; title: string; detail: string }[]>([])
+  useEffect(() => {
+    fetch('/api/history/trends')
+      .then(r => r.json())
+      .then(d => setInsights(d.insights ?? []))
+      .catch(() => {})
+  }, [])
+
   // interface monitor
   const [ifaces,       setIfaces]       = useState<IfaceStats[]>([])
   const [selIface,     setSelIface]     = useState<string>('')
@@ -513,6 +522,39 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {/* Insights de tendência */}
+      {insights.length > 0 && (
+        <div className="card p-5 mt-4">
+          <div className="flex items-center gap-2 mb-4">
+            <TrendingUp className="w-4 h-4 text-cyan-400" />
+            <h2 className="text-sm font-semibold text-white">Insights dos últimos 7 dias</h2>
+          </div>
+          <div className="space-y-2">
+            {insights.map((ins, i) => (
+              <div key={i} className={clsx('flex items-start gap-3 px-3 py-2.5 rounded-lg', {
+                'bg-red-500/8 border border-red-500/20':    ins.type === 'warning',
+                'bg-cyan-500/8 border border-cyan-500/20':  ins.type === 'info',
+                'bg-green-500/8 border border-green-500/20': ins.type === 'good',
+              })}>
+                <div className={clsx('w-2 h-2 rounded-full mt-1.5 shrink-0', {
+                  'bg-red-400':   ins.type === 'warning',
+                  'bg-cyan-400':  ins.type === 'info',
+                  'bg-green-400': ins.type === 'good',
+                })} />
+                <div>
+                  <p className={clsx('text-sm font-medium', {
+                    'text-red-300':   ins.type === 'warning',
+                    'text-cyan-300':  ins.type === 'info',
+                    'text-green-300': ins.type === 'good',
+                  })}>{ins.title}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{ins.detail}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
         {[

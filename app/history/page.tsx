@@ -41,8 +41,10 @@ export default function HistoryPage() {
   const [alertRows,  setAlertRows]  = useState<AlertRow[]>([])
   const [wifiRows,   setWifiRows]   = useState<WifiRow[]>([])
   const [loading,    setLoading]    = useState(true)
-  const [tab,        setTab]        = useState<'speedtest' | 'ping' | 'alerts' | 'wifi' | 'stability'>('speedtest')
+  const [tab,        setTab]        = useState<'speedtest' | 'ping' | 'alerts' | 'wifi' | 'stability' | 'sla'>('speedtest')
   const [stability,  setStability]  = useState<{ hourly: {hour:number;avgMs:number|null;count:number}[]; daily: {day:string;avgMs:number|null;maxMs:number;minMs:number;count:number;p95Ms:number|null}[] } | null>(null)
+  const [slaData,    setSlaData]    = useState<{ overallPct:number; dlPct:number; ulPct:number; avgDl:number; avgUl:number; avgPing:number; minDl:number; minUl:number; maxPing:number; daysOk:number; daysBad:number; daily:{day:string;avgDl:number;avgUl:number;avgPing:number;ok:boolean}[] } | null>(null)
+  const [slaSettings, setSlaSettings] = useState({ dl: 0, ul: 0 })
 
   const load = useCallback(() => {
     setLoading(true)
@@ -60,6 +62,25 @@ export default function HistoryPage() {
       setStability(st)
     }).finally(() => setLoading(false))
   }, [])
+
+  useEffect(() => {
+    // load contracted speeds from localStorage
+    try {
+      const raw = localStorage.getItem('myspeed_settings')
+      if (raw) {
+        const s = JSON.parse(raw)
+        setSlaSettings({ dl: s.contractedDownload ?? 0, ul: s.contractedUpload ?? 0 })
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => {
+    if (tab !== 'sla') return
+    fetch(`/api/history/sla?days=30&dl=${slaSettings.dl}&ul=${slaSettings.ul}`)
+      .then(r => r.json())
+      .then(d => setSlaData(d.sla))
+      .catch(() => {})
+  }, [tab, slaSettings])
 
   useEffect(() => { load() }, [load])
 
@@ -180,13 +201,14 @@ export default function HistoryPage() {
 
       {/* tabs */}
       <div className="flex gap-2 mb-5 flex-wrap">
-        {(['speedtest', 'ping', 'alerts', 'wifi', 'stability'] as const).map(t => (
+        {(['speedtest', 'ping', 'alerts', 'wifi', 'stability', 'sla'] as const).map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${tab === t ? 'btn-cyan' : 'bg-white/5 text-gray-400 hover:bg-white/10'}`}>
             {t === 'speedtest' ? 'Speedtest'
               : t === 'ping'  ? 'Ping / TTL'
               : t === 'alerts' ? `Alertas${alertRows.length ? ` (${alertRows.length})` : ''}`
               : t === 'stability' ? <span className="flex items-center gap-1.5"><BarChart2 className="w-3 h-3" />Estabilidade</span>
+              : t === 'sla' ? 'SLA'
               : <span className="flex items-center gap-1.5"><Wifi className="w-3 h-3" />WiFi{wifiRows.length ? ` (${wifiRows.length})` : ''}</span>}
           </button>
         ))}
@@ -471,6 +493,90 @@ export default function HistoryPage() {
                   </div>
                 )
               })}
+            </div>
+          )}
+        </div>
+        ) : tab === 'sla' ? (
+        /* ── SLA ── */
+        <div className="space-y-5">
+          {/* Config */}
+          <div className="card p-5">
+            <h2 className="text-sm font-semibold text-white mb-1">Velocidade Contratada</h2>
+            <p className="text-xs text-gray-500 mb-4">Configure em Configurações → Velocidade Contratada ou ajuste aqui temporariamente</p>
+            <div className="flex gap-4 flex-wrap">
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Download contratado (Mbps)</label>
+                <input type="number" min={0} className="input-field w-32 text-right mono"
+                  value={slaSettings.dl}
+                  onChange={e => setSlaSettings(s => ({ ...s, dl: Number(e.target.value) }))} />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Upload contratado (Mbps)</label>
+                <input type="number" min={0} className="input-field w-32 text-right mono"
+                  value={slaSettings.ul}
+                  onChange={e => setSlaSettings(s => ({ ...s, ul: Number(e.target.value) }))} />
+              </div>
+              <div className="flex items-end">
+                <button onClick={() => fetch(`/api/history/sla?days=30&dl=${slaSettings.dl}&ul=${slaSettings.ul}`).then(r => r.json()).then(d => setSlaData(d.sla)).catch(()=>{})}
+                  className="btn-cyan px-4 py-2 rounded-lg text-xs font-semibold">
+                  Calcular
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {slaData ? (
+            <>
+              {/* Scorecard */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {[
+                  { label: 'SLA Geral', value: `${slaData.overallPct}%`, color: slaData.overallPct >= 95 ? '#00ff88' : slaData.overallPct >= 80 ? '#ffd700' : '#ff4d4d', sub: slaData.overallPct >= 95 ? 'Excelente' : slaData.overallPct >= 80 ? 'Regular' : 'Abaixo do esperado' },
+                  { label: 'Download SLA', value: `${slaData.dlPct}%`, color: slaData.dlPct >= 95 ? '#00ff88' : slaData.dlPct >= 80 ? '#ffd700' : '#ff4d4d', sub: `Média ${slaData.avgDl} Mbps` },
+                  { label: 'Upload SLA', value: `${slaData.ulPct}%`, color: slaData.ulPct >= 95 ? '#00ff88' : slaData.ulPct >= 80 ? '#ffd700' : '#ff4d4d', sub: `Média ${slaData.avgUl} Mbps` },
+                  { label: 'Dias dentro do SLA', value: `${slaData.daysOk}/${slaData.daysOk + slaData.daysBad}`, color: slaData.daysBad === 0 ? '#00ff88' : '#ffd700', sub: `${slaData.daysBad} dia${slaData.daysBad !== 1 ? 's' : ''} com degradação` },
+                ].map(c => (
+                  <div key={c.label} className="card p-4">
+                    <p className="text-xs text-gray-500 mb-1">{c.label}</p>
+                    <p className="text-2xl font-black mono" style={{ color: c.color }}>{c.value}</p>
+                    <p className="text-xs text-gray-600 mt-1">{c.sub}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Daily table */}
+              <div className="card p-5">
+                <h2 className="text-sm font-semibold text-white mb-4">Últimos 30 dias — detalhe diário</h2>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-gray-500 border-b border-[#1a2744]">
+                        <th className="text-left pb-2">Dia</th>
+                        <th className="text-right pb-2">Download</th>
+                        <th className="text-right pb-2">Upload</th>
+                        <th className="text-right pb-2">Ping</th>
+                        <th className="text-right pb-2">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {slaData.daily.map(d => (
+                        <tr key={d.day} className="border-b border-[#1a2744]/50 hover:bg-white/3">
+                          <td className="py-1.5 mono text-gray-300">{d.day}</td>
+                          <td className="py-1.5 text-right mono" style={{ color: slaSettings.dl > 0 && d.avgDl < slaSettings.dl * 0.8 ? '#ff4d4d' : '#00d4ff' }}>{d.avgDl} Mbps</td>
+                          <td className="py-1.5 text-right mono" style={{ color: slaSettings.ul > 0 && d.avgUl < slaSettings.ul * 0.8 ? '#ff4d4d' : '#00ff88' }}>{d.avgUl} Mbps</td>
+                          <td className="py-1.5 text-right mono text-gray-400">{d.avgPing} ms</td>
+                          <td className="py-1.5 text-right">
+                            <span className={`tag text-[10px] ${d.ok ? 'tag-green' : 'tag-red'}`}>{d.ok ? 'OK' : 'Degradado'}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="card p-8 text-center text-gray-600 text-sm">
+              Configure a velocidade contratada e clique em Calcular
             </div>
           )}
         </div>

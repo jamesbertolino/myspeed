@@ -465,6 +465,17 @@ export default function DevicesPage() {
   const [newDevices, setNewDevices] = useState<Array<{ mac: string; ip: string; vendor?: string }>>([])
   const monitorRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Histórico de dispositivos conhecidos
+  interface KnownDevice { mac: string; label: string | null; ip: string | null; vendor: string | null; first_seen: number; last_seen: number; trusted: number }
+  const [knownDevices, setKnownDevices] = useState<KnownDevice[]>([])
+  const [showKnown, setShowKnown] = useState(false)
+
+  const loadKnown = () => {
+    fetch('/api/devices/known').then(r => r.json()).then(d => setKnownDevices(d.rows ?? [])).catch(() => {})
+  }
+
+  useEffect(() => { loadKnown() }, [])
+
   // Load available network interfaces — prefer agent (local machine) over server API
   useEffect(() => {
     const load = (url: string) =>
@@ -1264,6 +1275,80 @@ export default function DevicesPage() {
           </div>
         </div>
       )}
+
+      {/* Dispositivos Conhecidos — histórico / linha do tempo */}
+      <div className="card p-5">
+        <button
+          onClick={() => { setShowKnown(s => !s); if (!showKnown) loadKnown() }}
+          className="w-full flex items-center justify-between gap-2 text-left"
+        >
+          <div className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-purple-400" />
+            <h2 className="text-sm font-semibold text-white">Dispositivos Conhecidos</h2>
+            {knownDevices.length > 0 && <span className="tag tag-cyan text-xs">{knownDevices.length}</span>}
+          </div>
+          {showKnown ? <ChevronUp className="w-4 h-4 text-gray-500" /> : <ChevronDown className="w-4 h-4 text-gray-500" />}
+        </button>
+
+        {showKnown && (
+          <div className="mt-4">
+            {knownDevices.length === 0 ? (
+              <p className="text-sm text-gray-600 text-center py-4">Nenhum dispositivo registrado ainda. Ative o Monitoramento para começar.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-gray-500 border-b border-[#1a2744]">
+                      <th className="text-left pb-2">IP</th>
+                      <th className="text-left pb-2">MAC</th>
+                      <th className="text-left pb-2">Fabricante</th>
+                      <th className="text-left pb-2">Label</th>
+                      <th className="text-right pb-2">1ª vez</th>
+                      <th className="text-right pb-2">Última vez</th>
+                      <th className="text-right pb-2">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {knownDevices.map(d => {
+                      const vendor = d.vendor || lookupVendor(d.mac)
+                      const lastSeenAgo = Date.now() - d.last_seen
+                      const isOnline = lastSeenAgo < 5 * 60_000
+                      const isRecent = lastSeenAgo < 60 * 60_000
+                      return (
+                        <tr key={d.mac} className="border-b border-[#1a2744]/40 hover:bg-white/3">
+                          <td className="py-2 font-mono text-gray-200">{d.ip ?? '—'}</td>
+                          <td className="py-2 font-mono text-gray-500 text-[11px]">{d.mac}</td>
+                          <td className="py-2 text-gray-400">{vendor || '—'}</td>
+                          <td className="py-2">
+                            {d.label
+                              ? <span className="text-cyan-400">{d.label}</span>
+                              : <span className="text-gray-700">—</span>}
+                          </td>
+                          <td className="py-2 text-right text-gray-500">
+                            {new Date(d.first_seen).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                          </td>
+                          <td className="py-2 text-right text-gray-500">
+                            {new Date(d.last_seen).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                          </td>
+                          <td className="py-2 text-right">
+                            {d.trusted
+                              ? <span className="tag tag-green text-[10px]">Confiável</span>
+                              : isOnline
+                                ? <span className="tag tag-cyan text-[10px]">Online</span>
+                                : isRecent
+                                  ? <span className="tag tag-yellow text-[10px]">Recente</span>
+                                  : <span className="tag text-[10px] text-gray-600 border-gray-700">Inativo</span>}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
