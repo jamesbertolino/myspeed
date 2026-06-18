@@ -9,6 +9,7 @@ export interface AlertThresholds {
   packetLossPct:    number   // alerta se perda > X% (0 = desativado)
   downloadMbps:     number   // alerta se download < X Mbps (0 = desativado)
   uploadMbps:       number   // alerta se upload < X Mbps (0 = desativado)
+  wifiScoreMin:     number   // alerta se score WiFi cair abaixo (0 = desativado)
   cooldownMinutes:  number   // intervalo mínimo entre alertas do mesmo tipo
   webhookUrl:       string   // URL de webhook (Discord/Slack/genérico) — '' = desativado
 }
@@ -30,6 +31,7 @@ export const DEFAULT_ALERTS: AlertThresholds = {
   packetLossPct:   5,
   downloadMbps:    0,
   uploadMbps:      0,
+  wifiScoreMin:    0,
   cooldownMinutes: 5,
   webhookUrl:      '',
 }

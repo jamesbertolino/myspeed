@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/db'
 import { loadSettings } from '@/lib/settings'
+import { lookupVendor } from '@/lib/oui'
 
 export const runtime = 'nodejs'
 
@@ -11,7 +12,7 @@ export async function POST(req: NextRequest) {
   if (!Array.isArray(hosts)) return NextResponse.json({ error: 'invalid' }, { status: 400 })
 
   const now = Date.now()
-  const newDevices: Array<{ mac: string; ip: string }> = []
+  const newDevices: Array<{ mac: string; ip: string; vendor: string }> = []
 
   for (const h of hosts) {
     if (!h.mac) continue
@@ -20,12 +21,12 @@ export async function POST(req: NextRequest) {
       { mac: string; trusted: number } | undefined
 
     if (!existing) {
-      // Primeiro avistamento — registra e marca como novo
+      const vendor = lookupVendor(mac)
       db.prepare(`
-        INSERT INTO known_devices (mac, ip, first_seen, last_seen, trusted)
-        VALUES (?, ?, ?, ?, 0)
-      `).run(mac, h.ip, now, now)
-      newDevices.push({ mac, ip: h.ip })
+        INSERT INTO known_devices (mac, ip, vendor, first_seen, last_seen, trusted)
+        VALUES (?, ?, ?, ?, ?, 0)
+      `).run(mac, h.ip, vendor || null, now, now)
+      newDevices.push({ mac, ip: h.ip, vendor })
     } else {
       // Já conhecido — atualiza ip e last_seen
       db.prepare('UPDATE known_devices SET ip = ?, last_seen = ? WHERE mac = ?').run(h.ip, now, mac)

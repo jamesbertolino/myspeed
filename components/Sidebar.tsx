@@ -10,6 +10,16 @@ import clsx from 'clsx'
 
 const CHANGELOG: { version: string; date: string; items: string[] }[] = [
   {
+    version: 'v3.3.0',
+    date: '2026-06-18',
+    items: [
+      'Dashboard: cards de saúde — score WiFi 2.4/5GHz, dispositivos conhecidos e último alerta',
+      'Alertas WiFi: notificação via webhook quando score do canal cair abaixo do limiar configurado',
+      'Estabilidade: nova aba no Histórico com latência por hora do dia e evolução diária (P95, máx, média)',
+      'Fingerprinting: detecção automática de fabricante (OUI) e tipo de dispositivo por padrão de portas',
+    ],
+  },
+  {
     version: 'v3.2.2',
     date: '2026-06-18',
     items: [
@@ -521,7 +531,7 @@ function SidebarStatus() {
             onClick={() => setShowChangelog(true)}
             className="flex items-center gap-0.5 text-gray-400 hover:text-cyan-400 transition-colors group"
           >
-            v3.2.2
+            v3.3.0
             <ChevronDown className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
           </button>
         </div>

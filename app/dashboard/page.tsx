@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   Activity, Download, Upload, Globe, Wifi, Shield, Clock,
-  RefreshCw, TrendingUp, TrendingDown, Minus, MapPin, Building, Network
+  RefreshCw, TrendingUp, TrendingDown, Minus, MapPin, Building, Network, Monitor
 } from 'lucide-react'
 import LatencyChart from '@/components/LatencyChart'
 import StatCard from '@/components/StatCard'
@@ -57,6 +57,40 @@ export default function Dashboard() {
   // auto speedtest badge
   const [lastAutoRun,    setLastAutoRun]    = useState(0)
   const [autoRunning,    setAutoRunning]    = useState(false)
+
+  // health summary
+  const [wifiScore24, setWifiScore24] = useState<number | null>(null)
+  const [wifiScore5,  setWifiScore5]  = useState<number | null>(null)
+  const [devicesCount, setDevicesCount] = useState<number | null>(null)
+  const [lastAlertMsg, setLastAlertMsg] = useState<string | null>(null)
+  const [lastAlertTs,  setLastAlertTs]  = useState<number | null>(null)
+
+  useEffect(() => {
+    // último scan WiFi
+    fetch('/api/history/wifi?limit=1')
+      .then(r => r.json())
+      .then(d => {
+        const row = d.rows?.[0]
+        if (row) {
+          setWifiScore24(row.band24_score ?? null)
+          setWifiScore5(row.band5_score ?? null)
+        }
+      })
+      .catch(() => {})
+    // dispositivos conhecidos
+    fetch('/api/devices/known')
+      .then(r => r.json())
+      .then(d => setDevicesCount(d.rows?.length ?? 0))
+      .catch(() => {})
+    // último alerta
+    fetch('/api/history/alerts?limit=1')
+      .then(r => r.json())
+      .then(d => {
+        const row = d.rows?.[0]
+        if (row) { setLastAlertMsg(row.message); setLastAlertTs(row.ts) }
+      })
+      .catch(() => {})
+  }, [])
 
   // interface monitor
   const [ifaces,       setIfaces]       = useState<IfaceStats[]>([])
@@ -300,6 +334,61 @@ export default function Dashboard() {
           color={packetLoss === 0 ? 'green' : packetLoss < 1 ? 'yellow' : 'red'}
           tag={packetLoss === 0 ? 'Sem perda' : packetLoss < 1 ? 'Aceitável' : 'Crítico'}
           tagColor={packetLoss === 0 ? 'tag-green' : packetLoss < 1 ? 'tag-yellow' : 'tag-red'} />
+      </div>
+
+      {/* Health summary */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        {/* WiFi 2.4 */}
+        <div className="card p-4 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+            style={{ background: wifiScore24 == null ? '#1a2744' : wifiScore24 >= 70 ? '#00ff8820' : wifiScore24 >= 40 ? '#ffd70020' : '#ff4d4d20' }}>
+            <Wifi className="w-4 h-4" style={{ color: wifiScore24 == null ? '#4a5568' : wifiScore24 >= 70 ? '#00ff88' : wifiScore24 >= 40 ? '#ffd700' : '#ff4d4d' }} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs text-gray-500">WiFi 2.4GHz</p>
+            <p className="text-lg font-black mono" style={{ color: wifiScore24 == null ? '#4a5568' : wifiScore24 >= 70 ? '#00ff88' : wifiScore24 >= 40 ? '#ffd700' : '#ff4d4d' }}>
+              {wifiScore24 != null ? `${wifiScore24}/100` : '—'}
+            </p>
+            <p className="text-xs text-gray-600">{wifiScore24 == null ? 'Sem scan' : wifiScore24 >= 70 ? 'Ótimo' : wifiScore24 >= 40 ? 'Regular' : 'Ruim'}</p>
+          </div>
+        </div>
+        {/* WiFi 5 */}
+        <div className="card p-4 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+            style={{ background: wifiScore5 == null ? '#1a2744' : wifiScore5 >= 70 ? '#00ff8820' : wifiScore5 >= 40 ? '#ffd70020' : '#ff4d4d20' }}>
+            <Wifi className="w-4 h-4" style={{ color: wifiScore5 == null ? '#4a5568' : wifiScore5 >= 70 ? '#00ff88' : wifiScore5 >= 40 ? '#ffd700' : '#ff4d4d' }} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs text-gray-500">WiFi 5GHz</p>
+            <p className="text-lg font-black mono" style={{ color: wifiScore5 == null ? '#4a5568' : wifiScore5 >= 70 ? '#00ff88' : wifiScore5 >= 40 ? '#ffd700' : '#ff4d4d' }}>
+              {wifiScore5 != null ? `${wifiScore5}/100` : '—'}
+            </p>
+            <p className="text-xs text-gray-600">{wifiScore5 == null ? 'Sem scan' : wifiScore5 >= 70 ? 'Ótimo' : wifiScore5 >= 40 ? 'Regular' : 'Ruim'}</p>
+          </div>
+        </div>
+        {/* Dispositivos */}
+        <div className="card p-4 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-purple-500/10">
+            <Monitor className="w-4 h-4 text-purple-400" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs text-gray-500">Dispositivos</p>
+            <p className="text-lg font-black mono text-purple-400">{devicesCount ?? '—'}</p>
+            <p className="text-xs text-gray-600">{devicesCount == null ? 'Sem scan' : devicesCount === 0 ? 'Nenhum mapeado' : 'conhecidos'}</p>
+          </div>
+        </div>
+        {/* Último alerta */}
+        <div className="card p-4 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+            style={{ background: lastAlertTs ? '#ff4d4d20' : '#1a2744' }}>
+            <Shield className="w-4 h-4" style={{ color: lastAlertTs ? '#ff4d4d' : '#4a5568' }} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs text-gray-500">Último alerta</p>
+            <p className="text-sm font-semibold text-red-400 truncate">{lastAlertTs ? new Date(lastAlertTs).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'}</p>
+            <p className="text-xs text-gray-600 truncate max-w-[120px]">{lastAlertMsg ?? 'Nenhum alerta'}</p>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

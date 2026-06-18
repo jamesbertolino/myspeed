@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { Wifi, Plus, Trash2, Info, CheckCircle, AlertTriangle, Radio, ScanLine, RefreshCw, Puzzle, Sparkles, ShieldCheck, ShieldAlert, ShieldX, TrendingUp, Terminal, Smartphone, FileDown, Activity } from 'lucide-react'
 import WiFiChannelMap, { WiFiNetwork } from '@/components/WiFiChannelMap'
 import { NON_OVERLAPPING_24, NON_OVERLAPPING_5 } from '@/lib/utils'
+import { loadSettings } from '@/lib/settings'
 import clsx from 'clsx'
 
 // Gauge semi-circular de qualidade do canal (0–100).
@@ -186,6 +187,7 @@ export default function WiFiPage() {
   const [recommended5, setRecommended5] = useState<number>(NON_OVERLAPPING_5[0])
   const [connectedBssid, setConnectedBssid] = useState<string | null>(null)
   const lastSaveRef = useRef<number>(0)
+  const lastWifiAlertRef = useRef<number>(0)
 
   // Detect Chrome extension
   useEffect(() => {
@@ -436,6 +438,30 @@ export default function WiFiPage() {
         networks,
       }),
     }).catch(() => { /* histórico é best-effort */ })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [networks, isRealData])
+
+  // Alerta de degradação WiFi
+  useEffect(() => {
+    if (!isRealData || networks.length === 0) return
+    const settings = loadSettings()
+    const min = settings.alerts.wifiScoreMin ?? 0
+    if (!settings.alerts.enabled || min <= 0 || !settings.alerts.webhookUrl) return
+    const penalty24 = myChannel24 != null ? channelPenalty(competitorNetworks, '2.4', myChannel24) : null
+    const score24 = penalty24 != null ? Math.max(0, Math.round(100 - penalty24)) : null
+    if (score24 === null || score24 >= min) return
+    const cooldownMs = (settings.alerts.cooldownMinutes ?? 5) * 60_000
+    const now = Date.now()
+    if (now - lastWifiAlertRef.current < cooldownMs) return
+    lastWifiAlertRef.current = now
+    fetch('/api/alerts/webhook', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        webhookUrl: settings.alerts.webhookUrl,
+        message: `Alerta WiFi: qualidade do canal 2.4GHz caiu para ${score24}/100 (mínimo configurado: ${min})`,
+      }),
+    }).catch(() => {})
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [networks, isRealData])
 

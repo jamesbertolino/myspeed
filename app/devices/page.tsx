@@ -8,6 +8,7 @@ import {
   Bell, BellOff, X,
 } from 'lucide-react'
 import clsx from 'clsx'
+import { lookupVendor, guessDeviceType } from '@/lib/oui'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -118,6 +119,8 @@ function DeviceCard({ device, onSelect }: { device: Device; onSelect: (d: Device
   const hasPorts = device.openPorts.length > 0
   const visiblePorts = expanded ? device.openPorts : device.openPorts.slice(0, 4)
   const extra = device.openPorts.length - 4
+  const vendor = device.vendor || (device.mac ? lookupVendor(device.mac) : '')
+  const deviceType = guessDeviceType(device.openPorts.map(p => p.port))
 
   return (
     <div
@@ -136,8 +139,11 @@ function DeviceCard({ device, onSelect }: { device: Device; onSelect: (d: Device
           </div>
           <div className="min-w-0">
             <p className="font-mono text-sm text-white font-medium">{device.ip}</p>
-            {device.vendor && (
-              <p className="text-[11px] text-gray-400 truncate">{device.vendor}</p>
+            {vendor && (
+              <p className="text-[11px] text-gray-400 truncate">{vendor}</p>
+            )}
+            {deviceType !== 'Dispositivo' && (
+              <p className="text-[10px] text-cyan-500/70 truncate">{deviceType}</p>
             )}
           </div>
         </div>
@@ -456,7 +462,7 @@ export default function DevicesPage() {
 
   // Monitoramento contínuo
   const [monitoring, setMonitoring] = useState(false)
-  const [newDevices, setNewDevices] = useState<Array<{ mac: string; ip: string }>>([])
+  const [newDevices, setNewDevices] = useState<Array<{ mac: string; ip: string; vendor?: string }>>([])
   const monitorRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Load available network interfaces — prefer agent (local machine) over server API
@@ -938,10 +944,11 @@ export default function DevicesPage() {
           <div className="space-y-2">
             {newDevices.map(d => (
               <div key={d.mac} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-red-500/5 border border-red-500/20">
-                <div className="flex items-center gap-3 text-sm">
+                <div className="flex items-center gap-3 text-sm min-w-0">
                   <Monitor className="w-4 h-4 text-red-400 shrink-0" />
                   <span className="font-mono text-gray-200">{d.ip}</span>
                   <span className="text-gray-500 font-mono text-xs">{d.mac}</span>
+                  {d.vendor && <span className="text-cyan-400 text-xs px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20">{d.vendor}</span>}
                 </div>
                 <button
                   onClick={async () => {

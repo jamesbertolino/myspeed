@@ -371,6 +371,19 @@ export default function SettingsPage() {
             />
           </div>
 
+          {/* wifi score */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <label className="text-xs text-gray-400 block mb-1">Score WiFi mínimo (0–100)</label>
+              <p className="text-xs text-gray-600">Alerta se qualidade do canal WiFi cair abaixo · 0 = desativado</p>
+            </div>
+            <input type="number" min={0} max={100}
+              className="input-field w-24 text-right mono"
+              value={settings.alerts.wifiScoreMin ?? 0}
+              onChange={e => setSettings(s => ({ ...s, alerts: { ...s.alerts, wifiScoreMin: Number(e.target.value) } }))}
+            />
+          </div>
+
           {/* webhook */}
           <div className="pt-3 border-t border-[#1a2744]">
             <label className="text-xs text-gray-400 block mb-1">Webhook (Discord, Slack ou genérico)</label>

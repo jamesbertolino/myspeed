@@ -1,9 +1,9 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { Download, Upload, Activity, Trash2, RefreshCw, TrendingUp, Bell, Wifi } from 'lucide-react'
+import { Download, Upload, Activity, Trash2, RefreshCw, TrendingUp, Bell, Wifi, BarChart2 } from 'lucide-react'
 import { formatSpeed, latencyColor } from '@/lib/utils'
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from 'recharts'
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend, BarChart, Bar, Cell } from 'recharts'
 
 interface SpeedRow {
   id: number; ts: number; ping: number; jitter: number
@@ -41,7 +41,8 @@ export default function HistoryPage() {
   const [alertRows,  setAlertRows]  = useState<AlertRow[]>([])
   const [wifiRows,   setWifiRows]   = useState<WifiRow[]>([])
   const [loading,    setLoading]    = useState(true)
-  const [tab,        setTab]        = useState<'speedtest' | 'ping' | 'alerts' | 'wifi'>('speedtest')
+  const [tab,        setTab]        = useState<'speedtest' | 'ping' | 'alerts' | 'wifi' | 'stability'>('speedtest')
+  const [stability,  setStability]  = useState<{ hourly: {hour:number;avgMs:number|null;count:number}[]; daily: {day:string;avgMs:number|null;maxMs:number;minMs:number;count:number;p95Ms:number|null}[] } | null>(null)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -50,11 +51,13 @@ export default function HistoryPage() {
       fetch('/api/history/ping?limit=200').then(r => r.json()),
       fetch('/api/history/alerts?limit=100').then(r => r.json()),
       fetch('/api/history/wifi?limit=200').then(r => r.json()),
-    ]).then(([sp, pg, al, wf]) => {
+      fetch('/api/history/stability?days=7').then(r => r.json()),
+    ]).then(([sp, pg, al, wf, st]) => {
       setSpeedRows(sp.rows ?? [])
       setPingRows((pg.rows ?? []).reverse())
       setAlertRows(al.rows ?? [])
       setWifiRows(wf.rows ?? [])
+      setStability(st)
     }).finally(() => setLoading(false))
   }, [])
 
@@ -143,7 +146,7 @@ export default function HistoryPage() {
         })
       } catch { /* ignore malformed */ }
     })
-    return [...map.entries()]
+    return Array.from(map.entries())
       .map(([ssid, v]) => ({ ssid, ...v }))
       .sort((a, b) => b.maxSignal - a.maxSignal)
   }, [wifiRows])
@@ -177,12 +180,13 @@ export default function HistoryPage() {
 
       {/* tabs */}
       <div className="flex gap-2 mb-5 flex-wrap">
-        {(['speedtest', 'ping', 'alerts', 'wifi'] as const).map(t => (
+        {(['speedtest', 'ping', 'alerts', 'wifi', 'stability'] as const).map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${tab === t ? 'btn-cyan' : 'bg-white/5 text-gray-400 hover:bg-white/10'}`}>
             {t === 'speedtest' ? 'Speedtest'
               : t === 'ping'  ? 'Ping / TTL'
               : t === 'alerts' ? `Alertas${alertRows.length ? ` (${alertRows.length})` : ''}`
+              : t === 'stability' ? <span className="flex items-center gap-1.5"><BarChart2 className="w-3 h-3" />Estabilidade</span>
               : <span className="flex items-center gap-1.5"><Wifi className="w-3 h-3" />WiFi{wifiRows.length ? ` (${wifiRows.length})` : ''}</span>}
           </button>
         ))}
@@ -469,6 +473,95 @@ export default function HistoryPage() {
               })}
             </div>
           )}
+        </div>
+        ) : tab === 'stability' ? (
+        /* ── Estabilidade ── */
+        <div className="space-y-5">
+          {/* Latência por hora do dia */}
+          <div className="card p-5">
+            <h2 className="text-sm font-semibold text-white mb-1">Latência média por hora do dia (últimos 7 dias)</h2>
+            <p className="text-xs text-gray-500 mb-4">Identifica horários problemáticos recorrentes</p>
+            {stability?.hourly && stability.hourly.some(h => h.count > 0) ? (
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={stability.hourly} barCategoryGap="10%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" />
+                  <XAxis dataKey="hour" tickFormatter={h => `${h}h`} tick={{ fill: '#4a5568', fontSize: 10 }} />
+                  <YAxis tick={{ fill: '#4a5568', fontSize: 10 }} unit="ms" />
+                  <Tooltip
+                    contentStyle={{ background: '#0a1128', border: '1px solid #1a2744', borderRadius: 8, fontSize: 12 }}
+                    formatter={(v: number) => [`${v} ms`, 'Média']}
+                    labelFormatter={h => `${h}h00`}
+                  />
+                  <Bar dataKey="avgMs" radius={[3, 3, 0, 0]}>
+                    {stability.hourly.map((h, i) => (
+                      <Cell key={i} fill={
+                        h.avgMs == null ? '#1a2744'
+                          : h.avgMs <= 30 ? '#00ff88'
+                          : h.avgMs <= 80 ? '#ffd700'
+                          : h.avgMs <= 150 ? '#ff8c00'
+                          : '#ff4d4d'
+                      } />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <p className="text-gray-600 text-sm text-center py-8">Sem amostras suficientes.</p>
+            )}
+          </div>
+
+          {/* Latência diária */}
+          <div className="card p-5">
+            <h2 className="text-sm font-semibold text-white mb-1">Evolução diária (últimos 7 dias)</h2>
+            <p className="text-xs text-gray-500 mb-4">Média, mínimo, máximo e P95 por dia</p>
+            {stability?.daily && stability.daily.length > 0 ? (
+              <>
+                <ResponsiveContainer width="100%" height={200}>
+                  <LineChart data={stability.daily}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" />
+                    <XAxis dataKey="day" tickFormatter={d => d.slice(5)} tick={{ fill: '#4a5568', fontSize: 10 }} />
+                    <YAxis tick={{ fill: '#4a5568', fontSize: 10 }} unit="ms" />
+                    <Tooltip contentStyle={{ background: '#0a1128', border: '1px solid #1a2744', borderRadius: 8, fontSize: 12 }} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Line type="monotone" dataKey="avgMs" stroke="#00d4ff" dot strokeWidth={2} name="Média (ms)" />
+                    <Line type="monotone" dataKey="p95Ms" stroke="#ffd700" dot={false} strokeWidth={1.5} strokeDasharray="4 2" name="P95 (ms)" />
+                    <Line type="monotone" dataKey="maxMs" stroke="#ff4d4d" dot={false} strokeWidth={1} strokeDasharray="2 3" name="Máximo (ms)" />
+                  </LineChart>
+                </ResponsiveContainer>
+
+                <div className="mt-4 overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-gray-500 border-b border-[#1a2744]">
+                        <th className="text-left pb-2">Dia</th>
+                        <th className="text-right pb-2">Amostras</th>
+                        <th className="text-right pb-2">Mín</th>
+                        <th className="text-right pb-2">Média</th>
+                        <th className="text-right pb-2">P95</th>
+                        <th className="text-right pb-2">Máx</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stability.daily.map(d => (
+                        <tr key={d.day} className="border-b border-[#1a2744]/50 hover:bg-white/3">
+                          <td className="py-1.5 text-gray-300 mono">{d.day}</td>
+                          <td className="py-1.5 text-right text-gray-500">{d.count}</td>
+                          <td className="py-1.5 text-right" style={{ color: '#00ff88' }}>{d.minMs}ms</td>
+                          <td className="py-1.5 text-right" style={{ color: d.avgMs != null && d.avgMs > 100 ? '#ff4d4d' : d.avgMs != null && d.avgMs > 50 ? '#ffd700' : '#00d4ff' }}>
+                            {d.avgMs ?? '—'}ms
+                          </td>
+                          <td className="py-1.5 text-right text-yellow-400">{d.p95Ms ?? '—'}ms</td>
+                          <td className="py-1.5 text-right text-red-400">{d.maxMs}ms</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
+              <p className="text-gray-600 text-sm text-center py-8">Sem amostras suficientes.</p>
+            )}
+          </div>
         </div>
         ) : (
         <div className="card p-5">
