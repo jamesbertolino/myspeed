@@ -10,6 +10,15 @@ import clsx from 'clsx'
 
 const CHANGELOG: { version: string; date: string; items: string[] }[] = [
   {
+    version: 'v3.2.1',
+    date: '2026-06-18',
+    items: [
+      'Correlação latência × score WiFi na aba WiFi do histórico',
+      'Gráfico dual-eixo: latência (ms) vs score de canal 2.4/5GHz no mesmo tempo',
+      'Coeficiente de Pearson mostra força da correlação (WiFi como causa de latência)',
+    ],
+  },
+  {
     version: 'v3.2.0',
     date: '2026-06-18',
     items: [
@@ -502,7 +511,7 @@ function SidebarStatus() {
             onClick={() => setShowChangelog(true)}
             className="flex items-center gap-0.5 text-gray-400 hover:text-cyan-400 transition-colors group"
           >
-            v3.2.0
+            v3.2.1
             <ChevronDown className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
           </button>
         </div>

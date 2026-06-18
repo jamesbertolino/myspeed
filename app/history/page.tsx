@@ -86,6 +86,43 @@ export default function HistoryPage() {
       '5GHz':   r.band5_score,
     })), [wifiRows])
 
+  // Correlação latência × score WiFi
+  // Para cada scan WiFi, busca o ping mais próximo no tempo (±2min).
+  // Série resultante usada num gráfico dual-eixo.
+  const correlationData = useMemo(() => {
+    if (!wifiRows.length || !pingRows.length) return []
+    const sorted = [...wifiRows].reverse() // cronológico
+    return sorted.flatMap(w => {
+      const nearest = pingRows.reduce<PingRow | null>((best, p) => {
+        const diff = Math.abs(p.ts - w.ts)
+        if (diff > 120_000) return best            // mais de 2 min: descarta
+        if (!best) return p
+        return diff < Math.abs(best.ts - w.ts) ? p : best
+      }, null)
+      if (!nearest) return []
+      return [{
+        t:       fmt(w.ts),
+        latency: nearest.ms,
+        score24: w.band24_score,
+        score5:  w.band5_score,
+      }]
+    })
+  }, [wifiRows, pingRows])
+
+  // Pearson entre latência e score 2.4GHz
+  const pearson24 = useMemo(() => {
+    const pts = correlationData.filter(d => d.score24 != null)
+    if (pts.length < 3) return null
+    const xs = pts.map(d => d.latency)
+    const ys = pts.map(d => d.score24 as number)
+    const n  = xs.length
+    const mx = xs.reduce((a, b) => a + b, 0) / n
+    const my = ys.reduce((a, b) => a + b, 0) / n
+    const num = xs.reduce((s, x, i) => s + (x - mx) * (ys[i] - my), 0)
+    const den = Math.sqrt(xs.reduce((s, x) => s + (x - mx) ** 2, 0) * ys.reduce((s, y) => s + (y - my) ** 2, 0))
+    return den === 0 ? null : parseFloat((num / den).toFixed(2))
+  }, [correlationData])
+
   // SSIDs únicos vistos: primeira e última vez
   const ssidTimeline = useMemo(() => {
     const map = new Map<string, { first: number; last: number; maxSignal: number; lastCh: number | null }>()
@@ -155,6 +192,45 @@ export default function HistoryPage() {
         <div className="flex justify-center py-16 text-gray-500 text-sm">Carregando...</div>
       ) : tab === 'wifi' ? (
         <>
+          {/* Correlação latência × score WiFi */}
+          {correlationData.length > 1 && (
+            <div className="card p-5 mb-4">
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-[#ffd700]" />
+                  <h2 className="text-sm font-semibold text-white">Correlação Latência × Qualidade WiFi</h2>
+                </div>
+                {pearson24 !== null && (
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-gray-500">Pearson r =</span>
+                    <span className={`font-bold mono ${Math.abs(pearson24) >= 0.6 ? 'text-yellow-400' : 'text-gray-400'}`}>
+                      {pearson24}
+                    </span>
+                    <span className="text-gray-600">
+                      {Math.abs(pearson24) >= 0.7 ? '(correlação forte)' : Math.abs(pearson24) >= 0.4 ? '(correlação moderada)' : '(correlação fraca)'}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <p className="text-[11px] text-gray-600 mb-4">
+                Latência (ms) vs score do canal 2.4GHz — picos de latência coincidindo com queda de score indicam WiFi como causa.
+              </p>
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={correlationData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" />
+                  <XAxis dataKey="t" tick={{ fill: '#4a5568', fontSize: 9 }} interval="preserveStartEnd" />
+                  <YAxis yAxisId="lat" orientation="left"  tick={{ fill: '#4a5568', fontSize: 10 }} unit="ms" />
+                  <YAxis yAxisId="sc"  orientation="right" domain={[0, 100]} tick={{ fill: '#4a5568', fontSize: 10 }} />
+                  <Tooltip contentStyle={{ background: '#0a1128', border: '1px solid #1a2744', borderRadius: 8, fontSize: 12 }} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Line yAxisId="lat" type="monotone" dataKey="latency" stroke="#ffd700" dot={false} strokeWidth={2} name="Latência (ms)" />
+                  <Line yAxisId="sc"  type="monotone" dataKey="score24" stroke="#00d4ff" dot={false} strokeWidth={2} name="Score 2.4GHz" connectNulls />
+                  <Line yAxisId="sc"  type="monotone" dataKey="score5"  stroke="#a855f7" dot={false} strokeWidth={1.5} name="Score 5GHz" connectNulls strokeDasharray="4 2" />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
           {/* Gráfico de score ao longo do tempo */}
           {wifiChart.length > 1 && (
             <div className="card p-5 mb-4">
